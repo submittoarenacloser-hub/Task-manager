@@ -2,16 +2,22 @@ name: Android
 
 # Собирает APK на каждый пуш. Сборка из main публикуется в Releases,
 # и по ссылке releases/latest/download/vector.apk всегда лежит свежая версия.
+# Сборку из другой ветки можно опубликовать как пробную: Actions → Android → Run workflow.
 on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Опубликовать APK в Releases
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -61,13 +67,16 @@ jobs:
           path: vector.apk
 
       - name: Опубликовать релиз
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.release)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
           name: Вектор для Android 1.0.${{ github.run_number }}
+          # сборка не из main — пробная, ссылка releases/latest на неё не указывает
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
           body: |
             Скачай `vector.apk` на телефон и открой его. Android попросит разрешить установку из этого источника.
             Новая версия ставится поверх старой, задачи сохраняются.
           files: vector.apk
-          make_latest: true
+          make_latest: ${{ github.ref == 'refs/heads/main' }}
