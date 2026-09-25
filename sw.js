@@ -1,13 +1,18 @@
 // Service worker: работа без сети и открытие нужного экрана по клику на уведомление.
 // При изменении файлов приложения увеличь версию кеша.
 
-const CACHE = 'vector-v1';
+const CACHE = 'vector-v3';
 
 const SHELL = [
   './',
   'index.html',
   'manifest.webmanifest',
+  'css/fonts.css',
   'css/styles.css',
+  'fonts/onest-cyrillic.woff2',
+  'fonts/onest-latin.woff2',
+  'fonts/unbounded-cyrillic.woff2',
+  'fonts/unbounded-latin.woff2',
   'icons/icon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -16,6 +21,7 @@ const SHELL = [
   'js/dates.js',
   'js/focus.js',
   'js/model.js',
+  'js/native.js',
   'js/notifier.js',
   'js/rules.js',
   'js/schedule.js',
@@ -30,8 +36,6 @@ const SHELL = [
   'js/ui/triage-view.js',
   'js/ui/ui-state.js',
 ];
-
-const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -55,20 +59,6 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
-
-  // Шрифты: из кеша, если уже скачаны.
-  if (FONT_HOSTS.includes(url.hostname)) {
-    event.respondWith(
-      caches.open(CACHE).then(async (cache) => {
-        const hit = await cache.match(request);
-        if (hit) return hit;
-        const res = await fetch(request);
-        if (res.ok || res.type === 'opaque') cache.put(request, res.clone());
-        return res;
-      }),
-    );
-    return;
-  }
 
   if (url.origin !== self.location.origin) return;
 

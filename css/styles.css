@@ -2045,6 +2045,17 @@ textarea:focus {
   color: var(--ink-3);
 }
 
+.exact-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--indirect-soft);
+  font-size: 14px;
+}
+
 .upcoming {
   display: flex;
   flex-direction: column;

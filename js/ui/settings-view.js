@@ -4,15 +4,23 @@ import { esc, icon, toast, openSheet } from './dom.js';
 import { WEEKDAYS_FULL } from '../dates.js';
 import { upcoming } from '../schedule.js';
 import { permission, requestPermission, show } from '../notifier.js';
+import { isNative, exactAlarmState, openExactAlarmSettings, shareBackup } from '../native.js';
 import * as store from '../store.js';
 import { ui, refresh } from './ui-state.js';
 
-const PERMISSION_TEXT = {
-  granted: 'Разрешены. Уведомления приходят системно.',
-  default: 'Браузер ещё не спрашивал разрешение.',
-  denied: 'Запрещены в браузере. Разреши их в настройках сайта, иначе напоминания будут только внутри приложения.',
-  unsupported: 'Этот браузер не показывает системные уведомления. На iPhone сначала добавь приложение на экран «Домой».',
-};
+const PERMISSION_TEXT = isNative
+  ? {
+      granted: 'Разрешены. Приходят, даже когда приложение закрыто.',
+      default: 'Android спросит разрешение, когда включишь.',
+      denied: 'Запрещены в настройках Android. Разреши уведомления для Вектора: Настройки → Приложения → Вектор → Уведомления.',
+      unsupported: 'Уведомления недоступны на этом устройстве.',
+    }
+  : {
+      granted: 'Разрешены. Уведомления приходят системно.',
+      default: 'Браузер ещё не спрашивал разрешение.',
+      denied: 'Запрещены в браузере. Разреши их в настройках сайта, иначе напоминания будут только внутри приложения.',
+      unsupported: 'Этот браузер не показывает системные уведомления. На iPhone сначала добавь приложение на экран «Домой».',
+    };
 
 const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone = () =>
@@ -113,13 +121,27 @@ export function render(state) {
               .join('')}</ul></div>`
           : ''
       }
-      <p class="field-hint">Уведомления приходят, пока приложение открыто или свёрнуто. Установи его на главный экран и не закрывай из списка запущенных, чтобы напоминания были надёжнее.</p>
+      ${
+        isNative && n.enabled && perm === 'granted' && exactAlarmState() !== 'granted'
+          ? `<div class="exact-note">
+              <p>Android может задерживать уведомления на несколько минут. Разреши точное время, чтобы они приходили минута в минуту.</p>
+              <button type="button" class="btn small" data-action="exact-alarms">Разрешить точное время</button>
+            </div>`
+          : ''
+      }
+      <p class="field-hint">${
+        isNative
+          ? 'Расписание хранится в Android: уведомления придут, даже если приложение закрыто или телефон перезагружен.'
+          : 'Уведомления приходят, пока приложение открыто или свёрнуто. Установи его на главный экран и не закрывай из списка запущенных, чтобы напоминания были надёжнее.'
+      }</p>
     </section>
 
     <section class="panel">
       <h2>Приложение</h2>
       ${
-        isStandalone()
+        isNative
+          ? '<p class="muted">Приложение для Android.</p>'
+          : isStandalone()
           ? '<p class="muted">Установлено на устройство.</p>'
           : ui.installPrompt
             ? '<button type="button" class="btn" data-action="install">Установить на устройство</button>'
@@ -133,7 +155,7 @@ export function render(state) {
       <h2>Данные</h2>
       <p class="muted">Задачи хранятся только на этом устройстве. Сохраняй копию, чтобы перенести их на другое.</p>
       <div class="row gap wrap">
-        <button type="button" class="btn small" data-action="export">Скачать копию</button>
+        <button type="button" class="btn small" data-action="export">${isNative ? 'Сохранить копию' : 'Скачать копию'}</button>
         <label class="btn small file-btn">Загрузить из файла<input type="file" id="s-import" accept="application/json,.json" data-import></label>
         <button type="button" class="btn small quiet danger" data-action="reset">Стереть всё</button>
       </div>
@@ -150,8 +172,17 @@ export const actions = {
       return s;
     });
     if (on && permission() !== 'granted') {
-      toast('Системные уведомления недоступны. Напоминания будут появляться внутри приложения.', { tone: 'warn', timeout: 7000 });
+      toast(
+        isNative
+          ? 'Уведомления запрещены в настройках Android. Разреши их для Вектора, и напоминания начнут приходить.'
+          : 'Системные уведомления недоступны. Напоминания будут появляться внутри приложения.',
+        { tone: 'warn', timeout: 7000 },
+      );
     }
+  },
+  'exact-alarms': async () => {
+    await openExactAlarmSettings();
+    refresh();
   },
   'test-notify': async () => {
     const via = await show({
@@ -170,11 +201,21 @@ export const actions = {
     ui.installPrompt = null;
     refresh();
   },
-  export: () => {
+  export: async () => {
+    const fileName = `vector-${new Date().toISOString().slice(0, 10)}.json`;
+    if (isNative) {
+      try {
+        await shareBackup(fileName, store.exportData());
+      } catch (err) {
+        // закрытие меню «Поделиться» без выбора — не ошибка
+        if (!/cancel/i.test(String(err?.message))) toast(`Не получилось сохранить копию: ${esc(err?.message ?? err)}`, { tone: 'warn' });
+      }
+      return;
+    }
     const blob = new Blob([store.exportData()], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `vector-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = fileName;
     document.body.append(a);
     a.click();
     a.remove();

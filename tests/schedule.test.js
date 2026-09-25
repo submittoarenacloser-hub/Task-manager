@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dueNotifications, upcoming, DEFAULT_NOTIFY } from '../js/schedule.js';
+import { dueNotifications, plannedNotifications, upcoming, DEFAULT_NOTIFY } from '../js/schedule.js';
 import { startFocus } from '../js/focus.js';
 import { mk, done, FRI } from './helpers.js';
 
@@ -84,4 +84,32 @@ test('upcoming отдаёт ближайшие по времени', () => {
   assert.deepEqual(list.map((x) => x.title), ['Проверка курса', 'Итог дня', 'План на день']);
   assert.equal(list[0].when, 'сегодня 13:30');
   assert.equal(list[2].when, 'завтра 09:00');
+});
+
+test('only оставляет только нужные виды (в Android остальное планирует система)', () => {
+  const tasks = [mk({ impact: 'direct' }), done('indirect', FRI(9)), done('indirect', FRI(9, 2)), done('noise', FRI(9, 4))];
+  const all = dueNotifications(stateWith(tasks), FRI(9, 5));
+  assert.deepEqual(kinds(all).sort(), ['morning', 'trap']);
+  assert.deepEqual(kinds(dueNotifications(stateWith(tasks), FRI(9, 5), {}, { only: ['trap'] })), ['trap']);
+});
+
+test('план на неделю: только будущее, по порядку, с готовым текстом', () => {
+  const t = mk({ title: 'Созвон', remindAt: FRI(15).toISOString() });
+  const list = plannedNotifications(stateWith([t]), FRI(12), 7);
+  assert.ok(list.every((n) => n.at > FRI(12)));
+  assert.ok(list.every((n, i) => i === 0 || list[i - 1].at <= n.at));
+  assert.deepEqual(list.slice(0, 3).map((n) => n.kind), ['midday', 'reminder', 'evening']);
+  // 7 дней × 3 ежедневных (сегодняшнее утро уже прошло) + воскресный разбор + напоминание
+  assert.equal(list.length, 7 * 3 - 1 + 1 + 1);
+  assert.ok(list.every((n) => n.title && n.body && n.key));
+  assert.deepEqual(plannedNotifications(stateWith([], { enabled: false }), FRI(12)), []);
+});
+
+test('текст на будущий день собирается на его дату', () => {
+  const s = stateWith([done('direct', FRI(10)), mk({ impact: 'direct' })]);
+  const list = plannedNotifications(s, FRI(12), 2);
+  const todayEvening = list.find((n) => n.key === 'evening:2026-09-25');
+  const tomorrowEvening = list.find((n) => n.key === 'evening:2026-09-26');
+  assert.match(todayEvening.title, /100%/);
+  assert.match(tomorrowEvening.title, /пока ничего не отмечено/);
 });

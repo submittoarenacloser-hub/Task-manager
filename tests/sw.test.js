@@ -12,9 +12,10 @@ function walk(dir) {
   });
 }
 
-test('все модули приложения есть в офлайн-кеше service worker', () => {
+test('все файлы приложения есть в офлайн-кеше service worker', () => {
   const sw = readFileSync(join(root, 'sw.js'), 'utf8');
-  const missing = walk(join(root, 'js'))
+  const missing = ['js', 'css', 'fonts']
+    .flatMap((dir) => walk(join(root, dir)))
     .map((p) => relative(root, p))
     .filter((p) => !sw.includes(`'${p}'`));
   assert.deepEqual(missing, []);

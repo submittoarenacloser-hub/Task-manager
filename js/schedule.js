@@ -101,60 +101,101 @@ const DAILY = {
   evening: eveningMessage,
 };
 
+const DAILY_NAMES = { morning: 'План на день', midday: 'Проверка курса', evening: 'Итог дня' };
+
+const settingsOf = (state) => ({ ...DEFAULT_NOTIFY, ...state.settings?.notify });
+
 /**
- * Уведомления, которые пора показать прямо сейчас.
- * fired — словарь уже показанных ключей, чтобы не повторяться.
+ * Все уведомления по времени на дни [from, from + days).
+ * Текст собирается лениво (build) на момент показа: состояние меняется только
+ * внутри приложения, поэтому текст, собранный заранее, остаётся верным.
  */
-export function dueNotifications(state, now = new Date(), fired = {}) {
-  const cfg = { ...DEFAULT_NOTIFY, ...state.settings?.notify };
-  if (!cfg.enabled) return [];
-  const out = [];
-  const t = new Date(now).getTime();
-  const today = dayKey(now);
-  const add = (key, at, grace, build) => {
-    const ts = new Date(at).getTime();
-    if (fired[key] || t < ts || t - ts >= grace) return;
-    const msg = build();
-    if (msg) out.push({ key, ...msg });
-  };
-
-  for (const kind of Object.keys(DAILY)) {
-    if (!cfg[kind]?.on) continue;
-    add(`${kind}:${today}`, atTime(now, cfg[kind].time), GRACE.daily, () => ({ kind, ...DAILY[kind](state, now) }));
+function timedNotifications(state, from, days) {
+  const cfg = settingsOf(state);
+  const list = [];
+  for (let d = 0; d < days; d++) {
+    const day = addDays(from, d);
+    const key = dayKey(day);
+    for (const kind of Object.keys(DAILY)) {
+      if (!cfg[kind]?.on) continue;
+      const at = atTime(day, cfg[kind].time);
+      list.push({ key: `${kind}:${key}`, kind, at, name: DAILY_NAMES[kind], build: () => DAILY[kind](state, at) });
+    }
+    if (cfg.weekly?.on && day.getDay() === Number(cfg.weekly.day)) {
+      list.push({
+        key: `weekly:${key}`,
+        kind: 'weekly',
+        at: atTime(day, cfg.weekly.time),
+        name: `Разбор недели (${WEEKDAYS_FULL[cfg.weekly.day]})`,
+        build: () => weeklyMessage(state),
+      });
+    }
   }
-
-  if (cfg.weekly?.on && new Date(now).getDay() === Number(cfg.weekly.day)) {
-    add(`weekly:${today}`, atTime(now, cfg.weekly.time), GRACE.daily, () => ({ kind: 'weekly', ...weeklyMessage(state) }));
-  }
-
   if (cfg.reminders) {
     for (const task of state.tasks) {
       if (!isOpen(task) || !task.remindAt) continue;
-      add(`task:${task.id}:${task.remindAt}`, task.remindAt, GRACE.reminder, () => ({
+      list.push({
+        key: `task:${task.id}:${task.remindAt}`,
         kind: 'reminder',
-        title: task.title,
-        body: task.impact === 'direct' ? 'Напоминание · прямая задача' : 'Напоминание',
-        url: '#tasks',
-      }));
+        at: new Date(task.remindAt),
+        name: task.title,
+        build: () => ({
+          title: task.title,
+          body: task.impact === 'direct' ? 'Напоминание · прямая задача' : 'Напоминание',
+          url: '#tasks',
+        }),
+      });
     }
   }
-
   const end = focusEndsAt(state.focus);
   if (end) {
     const task = state.tasks.find((x) => x.id === state.focus.taskId);
-    add(`focus:${state.focus.startedAt}`, end, GRACE.focus, () => ({
+    list.push({
+      key: `focus:${state.focus.startedAt}`,
       kind: 'focus',
-      title: 'Фокус-сессия окончена',
-      body: task ? `«${task.title}». Отметь результат или продолжи ещё один круг.` : 'Отметь результат.',
-      url: '#focus',
-    }));
+      at: end,
+      name: 'Конец фокус-сессии',
+      build: () => ({
+        title: 'Фокус-сессия окончена',
+        body: task ? `«${task.title}». Отметь результат или продолжи ещё один круг.` : 'Отметь результат.',
+        url: '#focus',
+      }),
+    });
   }
+  return list;
+}
 
-  if (cfg.trap) {
+const GRACE_BY_KIND = {
+  morning: GRACE.daily,
+  midday: GRACE.daily,
+  evening: GRACE.daily,
+  weekly: GRACE.daily,
+  reminder: GRACE.reminder,
+  focus: GRACE.focus,
+};
+
+const materialize = ({ build, name, ...item }) => ({ ...item, ...build() });
+
+/**
+ * Уведомления, которые пора показать прямо сейчас.
+ * fired — словарь уже показанных ключей, чтобы не повторяться.
+ * only — показать только эти виды (в Android-версии остальные запланированы системой).
+ */
+export function dueNotifications(state, now = new Date(), fired = {}, { only = null } = {}) {
+  if (!settingsOf(state).enabled) return [];
+  const t = new Date(now).getTime();
+  const wanted = (kind) => !only || only.includes(kind);
+
+  const out = timedNotifications(state, now, 1)
+    .filter((n) => wanted(n.kind) && !fired[n.key])
+    .filter((n) => t >= n.at.getTime() && t - n.at.getTime() < GRACE_BY_KIND[n.kind])
+    .map(materialize);
+
+  if (settingsOf(state).trap && wanted('trap')) {
     const trap = trapStatus(state.tasks, now);
     if (trap.streak >= 3 && trap.openDirect.length) {
       // Не чаще, чем на каждой третьей косвенной подряд: 3, 6, 9…
-      const key = `trap:${today}:${Math.floor(trap.streak / 3)}`;
+      const key = `trap:${dayKey(now)}:${Math.floor(trap.streak / 3)}`;
       if (!fired[key]) {
         out.push({
           key,
@@ -166,35 +207,24 @@ export function dueNotifications(state, now = new Date(), fired = {}) {
       }
     }
   }
-
   return out;
+}
+
+/** Всё, что нужно заранее поставить в расписание системы на ближайшие дни. */
+export function plannedNotifications(state, now = new Date(), days = 7) {
+  if (!settingsOf(state).enabled) return [];
+  return timedNotifications(state, now, days)
+    .filter((n) => n.at > now)
+    .sort((a, b) => a.at - b.at)
+    .map(materialize);
 }
 
 /** Ближайшие запланированные уведомления — для экрана настроек. */
 export function upcoming(state, now = new Date(), limit = 4) {
-  const cfg = { ...DEFAULT_NOTIFY, ...state.settings?.notify };
-  if (!cfg.enabled) return [];
-  const names = { morning: 'План на день', midday: 'Проверка курса', evening: 'Итог дня' };
-  const list = [];
-  for (let d = 0; d < 8; d++) {
-    const day = addDays(now, d);
-    for (const kind of Object.keys(names)) {
-      if (cfg[kind]?.on) list.push({ at: atTime(day, cfg[kind].time), title: names[kind] });
-    }
-    if (cfg.weekly?.on && day.getDay() === Number(cfg.weekly.day)) {
-      list.push({ at: atTime(day, cfg.weekly.time), title: `Разбор недели (${WEEKDAYS_FULL[cfg.weekly.day]})` });
-    }
-  }
-  if (cfg.reminders) {
-    for (const task of state.tasks) {
-      if (isOpen(task) && task.remindAt) list.push({ at: new Date(task.remindAt), title: task.title });
-    }
-  }
-  const end = focusEndsAt(state.focus);
-  if (end) list.push({ at: end, title: 'Конец фокус-сессии' });
-  return list
-    .filter((x) => x.at > now)
+  if (!settingsOf(state).enabled) return [];
+  return timedNotifications(state, now, 8)
+    .filter((n) => n.at > now)
     .sort((a, b) => a.at - b.at)
     .slice(0, limit)
-    .map((x) => ({ ...x, when: formatWhen(x.at, now) }));
+    .map((n) => ({ at: n.at, title: n.name, when: formatWhen(n.at, now) }));
 }

@@ -6,9 +6,23 @@
   "type": "module",
   "scripts": {
     "start": "npx --yes serve -l 5173 .",
-    "test": "node --test \"tests/**/*.test.js\""
+    "test": "node --test \"tests/**/*.test.js\"",
+    "build:native": "node scripts/build-native.mjs",
+    "android:sync": "npm run build:native && npx cap sync android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleRelease"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/filesystem": "^8.1.3",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capacitor/share": "^8.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
   }
 }

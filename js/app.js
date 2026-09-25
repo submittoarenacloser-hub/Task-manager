@@ -2,6 +2,7 @@
 
 import * as store from './store.js';
 import { startNotifier } from './notifier.js';
+import { isNative, initNative, scheduleSync, minimize } from './native.js';
 import { remainingMs, formatClock } from './focus.js';
 import { esc, icon, toast } from './ui/dom.js';
 import { ui, setRefresh } from './ui/ui-state.js';
@@ -77,8 +78,13 @@ function updateFocusPill() {
 }
 
 setRefresh(render);
-store.subscribe(render);
+store.subscribe((state, { silent } = {}) => {
+  if (!silent) render();
+});
 window.addEventListener('hashchange', () => {
+  // переход на другой экран (в том числе кнопкой «Назад») закрывает открытый лист
+  const sheet = document.getElementById('sheet');
+  if (sheet.open) sheet.close();
   render();
   viewEl.focus({ preventScroll: true });
   window.scrollTo({ top: 0 });
@@ -136,7 +142,8 @@ startNotifier({
 
 // ——— офлайн и установка ———
 
-if ('serviceWorker' in navigator) {
+// В Android-версии файлы и так лежат в приложении, service worker там не нужен.
+if (!isNative && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
   // клик по уведомлению: service worker просит открыть нужный экран
   navigator.serviceWorker.addEventListener('message', (e) => {
@@ -149,5 +156,22 @@ window.addEventListener('beforeinstallprompt', (e) => {
   ui.installPrompt = e;
   if (currentRoute() === 'settings') render();
 });
+
+// ——— Android-версия ———
+
+if (isNative) {
+  store.subscribe(() => scheduleSync());
+  initNative({
+    getState: store.getState,
+    onOpenUrl: (url) => (location.hash = url),
+    onResume: render,
+    onBack: () => {
+      const sheet = document.getElementById('sheet');
+      if (sheet.open) sheet.close();
+      else if (currentRoute() !== 'tasks') location.hash = '#tasks';
+      else minimize();
+    },
+  });
+}
 
 render();

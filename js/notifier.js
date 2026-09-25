@@ -1,16 +1,20 @@
-// Показ уведомлений в браузере. Расписание считает schedule.js, здесь только доставка.
+// Показ уведомлений. Расписание считает schedule.js, здесь только доставка:
+// в браузере — Notification API, в Android-версии — системные уведомления (native.js).
 
 import { dueNotifications } from './schedule.js';
 import { DAY } from './dates.js';
+import { isNative, nativePermission, requestNativePermission, showNative } from './native.js';
 
 const FIRED_KEY = 'vector.fired';
 
 export function permission() {
+  if (isNative) return nativePermission();
   if (typeof Notification === 'undefined') return 'unsupported';
   return Notification.permission; // default | granted | denied
 }
 
 export async function requestPermission() {
+  if (isNative) return requestNativePermission();
   if (permission() === 'unsupported') return 'unsupported';
   try {
     return await Notification.requestPermission();
@@ -50,6 +54,7 @@ async function swRegistration() {
  * иначе 'inapp' — тогда приложение покажет его у себя.
  */
 export async function show({ title, body, key, url = '#tasks' }) {
+  if (isNative) return (await showNative({ title, body, key, url })) ? 'system' : 'inapp';
   if (permission() !== 'granted') return 'inapp';
   const options = {
     body,
@@ -83,7 +88,9 @@ export async function show({ title, body, key, url = '#tasks' }) {
 
 /**
  * Периодически проверяет расписание и показывает то, что пора.
- * Работает, пока вкладка или установленное приложение живы (в том числе в фоне).
+ * В браузере работает, пока вкладка или установленное приложение живы (в том числе в фоне).
+ * В Android-версии уведомления по времени заранее стоят в системе, здесь остаётся
+ * только сигнал ловушки: он зависит от того, что пользователь делает прямо сейчас.
  */
 export function startNotifier({ getState, onInApp, interval = 20_000 }) {
   let busy = false;
@@ -92,7 +99,7 @@ export function startNotifier({ getState, onInApp, interval = 20_000 }) {
     busy = true;
     try {
       const fired = readFired();
-      const due = dueNotifications(getState(), new Date(), fired);
+      const due = dueNotifications(getState(), new Date(), fired, { only: isNative ? ['trap'] : null });
       for (const item of due) {
         fired[item.key] = Date.now();
         writeFired(fired);

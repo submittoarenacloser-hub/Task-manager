@@ -85,7 +85,7 @@ export function subscribe(fn) {
 function commit(next, { silent = false } = {}) {
   state = next;
   write(state);
-  if (!silent) for (const fn of listeners) fn(state);
+  for (const fn of listeners) fn(state, { silent });
 }
 
 const nowIso = () => new Date().toISOString();

@@ -1,0 +1,18 @@
+{
+  "appId": "io.github.submittoarenacloser_hub.vector",
+  "appName": "Вектор",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#EDF0F3"
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "cover"
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_vector",
+      "iconColor": "#0B7A55"
+    }
+  }
+}

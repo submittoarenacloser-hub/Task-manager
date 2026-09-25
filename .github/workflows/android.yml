@@ -1,0 +1,70 @@
+name: Android
+
+# Собирает APK на каждый пуш. Сборка из main публикуется в Releases,
+# и по ссылке releases/latest/download/vector.apk всегда лежит свежая версия.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Сборка APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Зависимости
+        run: npm ci
+
+      - name: Тесты
+        run: npm test
+
+      - name: Веб-часть в Android-проект
+        run: npm run android:sync
+
+      - name: Собрать APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Подготовить файл
+        run: cp android/app/build/outputs/apk/release/app-release.apk vector.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-android-1.0.${{ github.run_number }}
+          path: vector.apk
+
+      - name: Опубликовать релиз
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v1.0.${{ github.run_number }}
+          name: Вектор для Android 1.0.${{ github.run_number }}
+          body: |
+            Скачай `vector.apk` на телефон и открой его. Android попросит разрешить установку из этого источника.
+            Новая версия ставится поверх старой, задачи сохраняются.
+          files: vector.apk
+          make_latest: true
