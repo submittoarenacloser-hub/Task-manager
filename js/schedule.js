@@ -1,9 +1,10 @@
 // Что и когда показать в уведомлениях. Чистые функции — легко тестировать.
 
-import { atTime, addDays, dayKey, formatWhen, plural, HOUR, WEEKDAYS_FULL } from './dates.js';
+import { atTime, addDays, dayKey, formatWhen, formatDuration, plural, HOUR, WEEKDAYS_FULL } from './dates.js';
 import { openIn, mainTaskOfDay, countByImpact, isOpen } from './model.js';
 import { doneToday, focusShare, trapStatus } from './stats.js';
-import { focusEndsAt } from './focus.js';
+import { boundaries } from './focus.js';
+import { occurrencesBetween } from './repeat.js';
 
 export const DEFAULT_NOTIFY = {
   enabled: false,
@@ -132,12 +133,11 @@ function timedNotifications(state, from, days) {
     }
   }
   if (cfg.reminders) {
-    for (const task of state.tasks) {
-      if (!isOpen(task) || !task.remindAt) continue;
+    const reminder = (task, key, at) =>
       list.push({
-        key: `task:${task.id}:${task.remindAt}`,
+        key,
         kind: 'reminder',
-        at: new Date(task.remindAt),
+        at,
         name: task.title,
         build: () => ({
           title: task.title,
@@ -145,22 +145,56 @@ function timedNotifications(state, from, days) {
           url: '#tasks',
         }),
       });
+    const first = dayKey(from);
+    const last = dayKey(addDays(from, days - 1));
+    for (const task of state.tasks) {
+      if (!isOpen(task)) continue;
+      if (task.repeat && task.remindTime && task.dueDate) {
+        // повторяющаяся: напоминание в каждый её день, начиная с ближайшего
+        const start = task.dueDate > first ? task.dueDate : first;
+        for (const date of occurrencesBetween(task.repeat, start, last)) {
+          reminder(task, `task:${task.id}:${date}`, atTime(new Date(`${date}T00:00`), task.remindTime));
+        }
+      } else if (task.remindAt) {
+        reminder(task, `task:${task.id}:${task.remindAt}`, new Date(task.remindAt));
+      }
     }
   }
-  const end = focusEndsAt(state.focus);
-  if (end) {
-    const task = state.tasks.find((x) => x.id === state.focus.taskId);
-    list.push({
-      key: `focus:${state.focus.startedAt}`,
-      kind: 'focus',
-      at: end,
-      name: 'Конец фокус-сессии',
-      build: () => ({
-        title: 'Фокус-сессия окончена',
-        body: task ? `«${task.title}». Отметь результат или продолжи ещё один круг.` : 'Отметь результат.',
-        url: '#focus',
-      }),
-    });
+  const f = state.focus;
+  if (f) {
+    const task = state.tasks.find((x) => x.id === f.taskId);
+    const name = task ? `«${task.title}»` : 'задача';
+    const rounds = f.plan.filter((x) => x.kind === 'focus');
+    for (const { index, at } of boundaries(f)) {
+      const seg = f.plan[index];
+      const next = f.plan[index + 1];
+      let msg;
+      if (!next) {
+        const mins = rounds.reduce((a, x) => a + x.minutes, 0);
+        msg = {
+          title: 'Фокус-сессия окончена',
+          body: `${name}: ${formatDuration(mins)} фокуса. Отметь результат.`,
+        };
+      } else if (seg.kind === 'focus') {
+        const round = f.plan.slice(0, index + 1).filter((x) => x.kind === 'focus').length;
+        msg = {
+          title: `Перерыв ${next.minutes} мин`,
+          body: `Круг ${round} из ${rounds.length} готов. Встань, пройдись, отвлекись от экрана.`,
+        };
+      } else {
+        msg = {
+          title: 'Перерыв окончен, снова фокус',
+          body: `${name}, ${next.minutes} мин.`,
+        };
+      }
+      list.push({
+        key: `focus:${f.startedAt}:${index}`,
+        kind: 'focus',
+        at,
+        name: next ? (seg.kind === 'focus' ? 'Перерыв' : 'Снова фокус') : 'Конец фокус-сессии',
+        build: () => ({ ...msg, url: '#focus' }),
+      });
+    }
   }
   return list;
 }

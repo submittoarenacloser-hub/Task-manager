@@ -22,6 +22,9 @@
   --alert: #c2410c;
   --alert-soft: #fce8de;
   --alert-ink: #9a330a;
+  --break: #3a78b5;
+  --break-soft: #dde9f5;
+  --break-ink: #1f5588;
 
   --toast-bg: #0f1a22;
   --toast-fg: #f2f5f7;
@@ -60,6 +63,9 @@
     --alert: #ff7a45;
     --alert-soft: #3a1e13;
     --alert-ink: #ffb08f;
+  --break: #5b9bd5;
+  --break-soft: #172a3c;
+  --break-ink: #9cc5ea;
     --toast-bg: #e6ecf1;
     --toast-fg: #0f1a22;
     --toast-action: #075b3f;
@@ -90,6 +96,9 @@
   --alert: #ff7a45;
   --alert-soft: #3a1e13;
   --alert-ink: #ffb08f;
+  --break: #5b9bd5;
+  --break-soft: #172a3c;
+  --break-ink: #9cc5ea;
   --toast-bg: #e6ecf1;
   --toast-fg: #0f1a22;
   --toast-action: #075b3f;
@@ -329,6 +338,15 @@ a {
   height: 8px;
   border-radius: 50%;
   background: var(--direct);
+}
+
+.focus-pill.is-break {
+  background: var(--break-soft);
+  color: var(--break-ink);
+}
+
+.focus-pill.is-break .pill-dot {
+  background: var(--break);
 }
 
 .pill-dot.is-running {
@@ -1323,6 +1341,110 @@ textarea:focus {
   stroke: var(--noise);
 }
 
+.dial.is-break .dial-fill {
+  stroke: var(--break);
+}
+
+.dial.is-break .dial-status {
+  color: var(--break-ink);
+  font-weight: 600;
+}
+
+/* ——— Помодоро: выбор длительностей и полоса этапов ——— */
+
+.pomo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+
+.pomo-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .pomo-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
+.pomo-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.pomo .chip {
+  min-height: 36px;
+  padding: 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pomo .chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pstrip {
+  display: flex;
+  gap: 3px;
+  width: 100%;
+  height: 12px;
+}
+
+.pseg {
+  position: relative;
+  flex-basis: 0;
+  min-width: 6px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.pseg-focus {
+  background: color-mix(in srgb, var(--direct) 22%, var(--surface-2));
+}
+
+.imp-indirect .pseg-focus {
+  background: color-mix(in srgb, var(--indirect) 22%, var(--surface-2));
+}
+
+.imp-noise .pseg-focus {
+  background: color-mix(in srgb, var(--noise) 30%, var(--surface-2));
+}
+
+.pseg-break {
+  background: var(--break-soft);
+}
+
+.pseg i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--direct);
+}
+
+.imp-indirect .pseg-focus i {
+  background: var(--indirect);
+}
+
+.imp-noise .pseg-focus i {
+  background: var(--noise);
+}
+
+.pseg-break i {
+  background: var(--break);
+}
+
+.pomo-sum {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
 .dial-text {
   position: absolute;
   inset: 0;
@@ -2054,6 +2176,50 @@ textarea:focus {
   border-radius: 12px;
   background: var(--indirect-soft);
   font-size: 14px;
+}
+
+.weekday-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wd {
+  min-width: 44px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.wd[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.repeat-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.repeat-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.repeat-custom input {
+  width: 84px;
+}
+
+.repeat-custom select {
+  width: auto;
 }
 
 .upcoming {

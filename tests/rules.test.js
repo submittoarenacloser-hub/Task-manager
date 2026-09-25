@@ -62,3 +62,19 @@ test('перенос в «Сегодня» запоминает день', () =>
   assert.equal(moved.todaySince, '2026-09-25');
   assert.equal(withHorizon(moved, 'month').todaySince, null);
 });
+
+test('задача с датой сама приближается к «Сегодня», но не отодвигается', async () => {
+  const { promoteDue } = await import('../js/model.js');
+  const now = new Date(2026, 8, 25, 9);
+  const tasks = [
+    mk({ id: 'due', horizon: 'month', dueDate: '2026-09-25' }),
+    mk({ id: 'soon', horizon: 'later', dueDate: '2026-09-29' }),
+    mk({ id: 'early', horizon: 'today', dueDate: '2026-10-20' }),
+    mk({ id: 'plain', horizon: 'week' }),
+  ];
+  const out = promoteDue(tasks, now);
+  const h = Object.fromEntries(out.map((t) => [t.id, t.horizon]));
+  assert.deepEqual(h, { due: 'today', soon: 'week', early: 'today', plain: 'week' });
+  assert.equal(out.find((t) => t.id === 'due').todaySince, '2026-09-25');
+  assert.equal(promoteDue(out, now), out);
+});

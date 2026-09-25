@@ -1,7 +1,7 @@
 // Service worker: работа без сети и открытие нужного экрана по клику на уведомление.
 // При изменении файлов приложения увеличь версию кеша.
 
-const CACHE = 'vector-v3';
+const CACHE = 'vector-v4';
 
 const SHELL = [
   './',
@@ -23,6 +23,7 @@ const SHELL = [
   'js/model.js',
   'js/native.js',
   'js/notifier.js',
+  'js/repeat.js',
   'js/rules.js',
   'js/schedule.js',
   'js/stats.js',

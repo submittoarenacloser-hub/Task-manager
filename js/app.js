@@ -3,7 +3,7 @@
 import * as store from './store.js';
 import { startNotifier } from './notifier.js';
 import { isNative, initNative, scheduleSync, minimize } from './native.js';
-import { remainingMs, formatClock } from './focus.js';
+import { position, formatClock } from './focus.js';
 import { esc, icon, toast } from './ui/dom.js';
 import { ui, setRefresh } from './ui/ui-state.js';
 import * as tasksView from './ui/tasks-view.js';
@@ -72,8 +72,12 @@ function updateFocusPill() {
   const show = f && currentRoute() !== 'focus';
   focusPill.hidden = !show;
   if (show) {
-    const left = remainingMs(f);
-    focusPill.innerHTML = `<span class="pill-dot ${f.running ? 'is-running' : ''}"></span>${left ? formatClock(left) : 'время вышло'}`;
+    const p = position(f);
+    const onBreak = !p.finished && p.segment.kind === 'break';
+    focusPill.classList.toggle('is-break', onBreak);
+    focusPill.innerHTML = `<span class="pill-dot ${f.running ? 'is-running' : ''}"></span>${
+      p.finished ? 'время вышло' : `${onBreak ? 'перерыв ' : ''}${formatClock(p.segmentRemainingMs)}`
+    }`;
   }
 }
 
@@ -125,6 +129,7 @@ setInterval(() => {
   const day = new Date().toDateString();
   if (day !== lastDay) {
     lastDay = day;
+    store.refreshDue(); // задачи с датой переезжают ближе к «Сегодня»
     render();
   }
 }, 60_000);
@@ -164,7 +169,10 @@ if (isNative) {
   initNative({
     getState: store.getState,
     onOpenUrl: (url) => (location.hash = url),
-    onResume: render,
+    onResume: () => {
+      store.refreshDue();
+      render();
+    },
     onBack: () => {
       const sheet = document.getElementById('sheet');
       if (sheet.open) sheet.close();

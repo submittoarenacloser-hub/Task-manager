@@ -1,6 +1,7 @@
 // Модель задач: типы влияния, горизонты, создание и сортировка.
 
 import { dayKey } from './dates.js';
+import { nextOccurrence, horizonForDate } from './repeat.js';
 
 /**
  * Три типа задач по влиянию на цель.
@@ -67,6 +68,11 @@ export function createTask(fields, now = new Date()) {
     todaySince: horizon === 'today' ? dayKey(now) : null,
     carryAck: null,
     order: 0,
+    // Повтор: правило (repeat.js), дата ближайшего раза и время напоминания каждый раз.
+    repeat: null,
+    dueDate: null,
+    remindTime: null,
+    nextId: null,
   };
 }
 
@@ -108,4 +114,50 @@ export function countByImpact(list) {
 /** Главная задача дня: первая открытая прямая в «Сегодня». */
 export function mainTaskOfDay(tasks) {
   return openIn(tasks, 'today').find((t) => t.impact === 'direct') ?? null;
+}
+
+const HORIZON_RANK = { today: 0, week: 1, month: 2, later: 3 };
+
+/**
+ * Следующий раз повторяющейся задачи после выполнения текущего.
+ * Считается от более поздней из дат: запланированной или сегодняшней,
+ * чтобы пропущенные дни не копились.
+ */
+export function nextInstance(task, now = new Date()) {
+  const today = dayKey(now);
+  const from = task.dueDate && task.dueDate > today ? task.dueDate : today;
+  const dueDate = nextOccurrence(task.repeat, from);
+  const horizon = horizonForDate(dueDate, today);
+  return {
+    ...task,
+    id: uid(),
+    status: 'open',
+    createdAt: new Date(now).toISOString(),
+    doneAt: null,
+    cutAt: null,
+    remindAt: null,
+    dueDate,
+    horizon,
+    todaySince: horizon === 'today' ? dueDate : null,
+    carryAck: null,
+    nextId: null,
+  };
+}
+
+/**
+ * Задачи с датой сами приближаются к «Сегодня», когда подходит их день.
+ * Только ближе, никогда не дальше: если задачу вручную подняли раньше срока, она остаётся.
+ * Возвращает тот же массив, если ничего не изменилось.
+ */
+export function promoteDue(tasks, now = new Date()) {
+  const today = dayKey(now);
+  let changed = false;
+  const out = tasks.map((t) => {
+    if (!isOpen(t) || !t.dueDate) return t;
+    const target = horizonForDate(t.dueDate, today);
+    if (HORIZON_RANK[target] >= HORIZON_RANK[t.horizon]) return t;
+    changed = true;
+    return { ...t, horizon: target, todaySince: target === 'today' ? t.dueDate : null, carryAck: null };
+  });
+  return changed ? out : tasks;
 }

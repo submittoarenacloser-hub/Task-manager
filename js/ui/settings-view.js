@@ -63,10 +63,6 @@ export function render(state) {
         <label class="field"><span class="field-label">Из них косвенных</span>
           <input type="number" id="s-limit-ind" data-limit="todayIndirect" min="0" max="10" value="${limits.todayIndirect}"></label>
       </div>
-      <label class="field"><span class="field-label">Длина фокус-сессии по умолчанию</span>
-        <select id="s-focus" data-focus-minutes>
-          ${[15, 25, 45, 50, 90].map((m) => `<option value="${m}" ${m === state.settings.focusMinutes ? 'selected' : ''}>${m} минут</option>`).join('')}
-        </select></label>
       <p class="field-hint">Шум в «Сегодня» не ставится совсем: приложение предложит отсечь его или отложить.</p>
     </section>
 
@@ -253,11 +249,6 @@ export function onChange(e) {
     el.value = value;
     store.updateSettings((s) => {
       s.limits[el.dataset.limit] = value;
-      return s;
-    }, silent);
-  } else if (el.dataset.focusMinutes !== undefined) {
-    store.updateSettings((s) => {
-      s.focusMinutes = Number(el.value);
       return s;
     }, silent);
   } else if (el.dataset.notify) {

@@ -26,6 +26,7 @@ export const icon = {
   up: (s) => svg('<path d="M12 19V5M6 11l6-6 6 6"/>', s),
   arrow: (s) => svg('<path d="M4 12h15M13 6l6 6-6 6"/>', s),
   user: (s) => svg('<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-3.6 4-5.4 7-5.4s5.8 1.8 7 5.4"/>', s),
+  repeat: (s) => svg('<path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/>', s),
   warn: (s) => svg('<path d="M12 3 2 20h20z"/><path d="M12 10v4.5M12 17.4v.1" stroke-width="2.2"/>', s),
 };
 

@@ -3,7 +3,18 @@
 import { esc, icon, openSheet, toast } from './dom.js';
 import { IMPACTS, IMPACT_IDS, HORIZONS, FILTER_QUESTION } from '../model.js';
 import { checkPlacement } from '../rules.js';
-import { addDays, atTime, toLocalInput, formatWhen, HOUR } from '../dates.js';
+import { addDays, atTime, toLocalInput, formatWhen, formatDayKey, dayKey, plural, HOUR } from '../dates.js';
+import {
+  REPEAT_PRESETS,
+  REPEAT_UNITS,
+  WEEKDAY_ORDER,
+  presetOf,
+  normalizeRule,
+  describeRule,
+  nextOccurrence,
+  horizonForDate,
+  addDaysKey,
+} from '../repeat.js';
 import * as store from '../store.js';
 import { ui } from './ui-state.js';
 
@@ -86,11 +97,18 @@ function quickTimes(now = new Date()) {
   return list;
 }
 
+const WD_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const capitalize = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
 export function openTaskSheet(id) {
   const task = store.findTask(id);
   if (!task) return;
   const now = new Date();
+  const today = dayKey(now);
   const impacts = IMPACT_IDS.map((k) => ({ id: k, label: IMPACTS[k].label, cls: `imp-${k}` }));
+  const repeating = Boolean(task.repeat);
+  const preset = presetOf(task.repeat);
+  const custom = task.repeat ?? { unit: 'day', every: 1 };
 
   openSheet(
     `<form class="sheet-body" id="task-form" novalidate>
@@ -111,19 +129,49 @@ export function openTaskSheet(id) {
         ${segmented('impact', impacts, task.impact)}
         <p class="field-hint" id="impact-hint">${esc(IMPACTS[task.impact].hint)}</p>
       </fieldset>
-      <fieldset class="field">
+      <fieldset class="field" id="horizon-field" ${repeating ? 'hidden' : ''}>
         <legend class="field-label">Когда</legend>
         ${segmented('horizon', HORIZONS, task.horizon)}
       </fieldset>
       <fieldset class="field">
-        <legend class="field-label">Напомнить</legend>
-        <div class="remind-row">
-          <input type="datetime-local" id="edit-remind" name="remindAt" value="${task.remindAt ? toLocalInput(task.remindAt) : ''}">
-          <button type="button" class="btn quiet small" data-remind="">Без напоминания</button>
+        <legend class="field-label">Повтор</legend>
+        <select id="edit-repeat" aria-label="Повтор">
+          ${REPEAT_PRESETS.map((p) => `<option value="${p.id}" ${p.id === preset ? 'selected' : ''}>${p.label}</option>`).join('')}
+        </select>
+        <div class="repeat-extra" id="repeat-extra" ${repeating ? '' : 'hidden'}>
+          <div class="repeat-custom" id="repeat-custom" ${preset === 'custom' ? '' : 'hidden'}>
+            <span>Раз в</span>
+            <input type="number" id="edit-every" min="1" max="365" inputmode="numeric" value="${custom.every}" aria-label="Сколько">
+            <select id="edit-unit" aria-label="Чего">
+              ${REPEAT_UNITS.map((u) => `<option value="${u.id}" ${u.id === custom.unit ? 'selected' : ''}>${plural(custom.every, u.forms)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="weekday-pick" id="repeat-days" role="group" aria-label="Дни недели" hidden>
+            ${WEEKDAY_ORDER.map((d) => `<button type="button" class="wd" data-wd="${d}" aria-pressed="false">${WD_SHORT[d]}</button>`).join('')}
+          </div>
+          <label class="field">
+            <span class="field-label">Первый раз</span>
+            <input type="date" id="edit-start" value="${task.dueDate ?? today}">
+          </label>
         </div>
-        <div class="chips">${quickTimes(now)
-          .map((q) => `<button type="button" class="chip" data-remind="${toLocalInput(q.at)}">${q.label}</button>`)
-          .join('')}</div>
+        <p class="field-hint" id="repeat-hint"></p>
+      </fieldset>
+      <fieldset class="field">
+        <legend class="field-label">Напомнить</legend>
+        <div id="remind-once" ${repeating ? 'hidden' : ''}>
+          <div class="remind-row">
+            <input type="datetime-local" id="edit-remind" name="remindAt" value="${task.remindAt ? toLocalInput(task.remindAt) : ''}">
+            <button type="button" class="btn quiet small" data-remind="">Без напоминания</button>
+          </div>
+          <div class="chips">${quickTimes(now)
+            .map((q) => `<button type="button" class="chip" data-remind="${toLocalInput(q.at)}">${q.label}</button>`)
+            .join('')}</div>
+        </div>
+        <div class="remind-row" id="remind-repeat" ${repeating ? '' : 'hidden'}>
+          <input type="time" id="edit-remind-time" value="${task.remindTime ?? ''}" aria-label="Время напоминания">
+          <span class="field-hint">в каждый день повтора</span>
+          <button type="button" class="btn quiet small" id="clear-remind-time">Без напоминания</button>
+        </div>
       </fieldset>
       <div class="delegate-row" id="delegate-row" hidden>
         <label class="field grow">
@@ -134,6 +182,7 @@ export function openTaskSheet(id) {
       </div>
       <div class="sheet-tools">
         <button type="button" class="btn quiet small" data-act="focus">${icon.play(16)} Фокус-сессия</button>
+        ${repeating && task.status === 'open' ? `<button type="button" class="btn quiet small" data-act="skip">${icon.repeat(16)} Пропустить этот раз</button>` : ''}
         <button type="button" class="btn quiet small" data-act="delegate">${icon.user(16)} Делегировать</button>
         <button type="button" class="btn quiet small danger" data-act="cut">${icon.cut(16)} Отсечь</button>
       </div>
@@ -144,34 +193,102 @@ export function openTaskSheet(id) {
     </form>`,
     (dialog, close) => {
       const form = dialog.querySelector('#task-form');
-      const remind = form.querySelector('#edit-remind');
-      form.addEventListener('change', (e) => {
-        if (e.target.name === 'impact') {
-          form.querySelector('#impact-hint').textContent = IMPACTS[e.target.value].hint;
+      const $ = (sel) => form.querySelector(sel);
+      const remind = $('#edit-remind');
+      let weekdays = task.repeat?.weekdays ?? null;
+
+      const startKey = () => $('#edit-start').value || today;
+      const weekdayOfStart = () => new Date(`${startKey()}T00:00`).getDay();
+
+      /** Правило из формы или null, если «Не повторять». */
+      const readRule = () => {
+        const id = $('#edit-repeat').value;
+        if (id === 'none') return null;
+        const base =
+          id === 'custom'
+            ? { unit: $('#edit-unit').value, every: Number($('#edit-every').value) || 1 }
+            : { ...REPEAT_PRESETS.find((p) => p.id === id).rule };
+        if (base.unit === 'week') base.weekdays = weekdays?.length ? weekdays : base.weekdays ?? [weekdayOfStart()];
+        // Если первый раз не меняли, сохраняем исходную дату отсчёта (важно для 31-го числа)
+        const anchor = task.repeat && startKey() === task.dueDate ? task.repeat.anchor : startKey();
+        return normalizeRule({ ...base, anchor }, startKey());
+      };
+
+      const syncRepeat = (resetDays = false) => {
+        const id = $('#edit-repeat').value;
+        const on = id !== 'none';
+        $('#repeat-extra').hidden = !on;
+        $('#horizon-field').hidden = on;
+        $('#remind-once').hidden = on;
+        $('#remind-repeat').hidden = !on;
+        $('#repeat-custom').hidden = id !== 'custom';
+        if (resetDays) {
+          weekdays = id === 'weekdays' ? [1, 2, 3, 4, 5] : id === 'weekly' || id === 'custom' ? [weekdayOfStart()] : null;
         }
+        const every = Number($('#edit-every').value) || 1;
+        $('#edit-unit').querySelectorAll('option').forEach((o) => {
+          o.textContent = plural(every, REPEAT_UNITS.find((u) => u.id === o.value).forms);
+        });
+        const rule = readRule();
+        const isWeek = rule?.unit === 'week';
+        $('#repeat-days').hidden = !isWeek;
+        if (isWeek) {
+          weekdays = rule.weekdays;
+          form.querySelectorAll('.wd').forEach((b) => b.setAttribute('aria-pressed', String(weekdays.includes(Number(b.dataset.wd)))));
+        }
+        $('#repeat-hint').textContent = rule
+          ? `${capitalize(describeRule(rule))}. Первый раз — ${formatDayKey(nextOccurrence(rule, addDaysKey(startKey(), -1)), now)}. В свой день задача сама появится в «Сегодня».`
+          : '';
+      };
+      syncRepeat();
+
+      form.addEventListener('change', (e) => {
+        if (e.target.name === 'impact') $('#impact-hint').textContent = IMPACTS[e.target.value].hint;
+        if (e.target.id === 'edit-repeat') syncRepeat(true);
+        if (e.target.id === 'edit-unit' || e.target.id === 'edit-start') syncRepeat(e.target.id === 'edit-unit');
       });
+      $('#edit-every').addEventListener('input', () => syncRepeat());
+      form.querySelectorAll('.wd').forEach((b) =>
+        b.addEventListener('click', () => {
+          const d = Number(b.dataset.wd);
+          const next = weekdays.includes(d) ? weekdays.filter((x) => x !== d) : [...weekdays, d];
+          if (!next.length) return; // хотя бы один день
+          weekdays = next;
+          // «По будням» с другими днями — это уже «Каждую неделю» по выбранным дням
+          if ($('#edit-repeat').value === 'weekdays') $('#edit-repeat').value = 'weekly';
+          syncRepeat();
+        }),
+      );
       form.querySelectorAll('[data-remind]').forEach((b) =>
         b.addEventListener('click', () => {
           remind.value = b.dataset.remind;
         }),
       );
-      form.querySelector('[data-act="focus"]').addEventListener('click', () => {
+      $('#clear-remind-time').addEventListener('click', () => {
+        $('#edit-remind-time').value = '';
+      });
+      $('[data-act="focus"]').addEventListener('click', () => {
         close();
         ui.focusTaskId = id;
         location.hash = '#focus';
       });
-      form.querySelector('[data-act="cut"]').addEventListener('click', () => {
+      $('[data-act="skip"]')?.addEventListener('click', () => {
+        close();
+        const date = store.skipOccurrence(id);
+        if (date) toast(`Этот раз пропущен. Следующий — ${formatDayKey(date)}.`);
+      });
+      $('[data-act="cut"]').addEventListener('click', () => {
         close();
         cutWithUndo(id);
       });
-      form.querySelector('[data-act="delegate"]').addEventListener('click', () => {
-        const row = form.querySelector('#delegate-row');
+      $('[data-act="delegate"]').addEventListener('click', () => {
+        const row = $('#delegate-row');
         row.hidden = false;
         row.querySelector('input').focus();
       });
-      form.querySelector('[data-act="delegate-confirm"]').addEventListener('click', () => {
-        const who = form.querySelector('#edit-delegate').value.trim();
-        if (!who) return form.querySelector('#edit-delegate').focus();
+      $('[data-act="delegate-confirm"]').addEventListener('click', () => {
+        const who = $('#edit-delegate').value.trim();
+        if (!who) return $('#edit-delegate').focus();
         close();
         store.delegateTask(id, who);
         toast(`Передано: ${esc(who)}. Задача ушла из твоих списков.`, {
@@ -182,9 +299,11 @@ export function openTaskSheet(id) {
         e.preventDefault();
         const data = new FormData(form);
         const title = String(data.get('title')).trim();
-        if (!title) return form.querySelector('#edit-title').focus();
+        if (!title) return $('#edit-title').focus();
         const impact = data.get('impact');
-        let horizon = data.get('horizon');
+        const rule = readRule();
+        const dueDate = rule ? nextOccurrence(rule, addDaysKey(startKey(), -1)) : null;
+        let horizon = rule ? horizonForDate(dueDate, today) : data.get('horizon');
         const current = store.findTask(id);
         const needsCheck = horizon === 'today' && (current.horizon !== 'today' || current.impact !== impact);
         close();
@@ -194,19 +313,26 @@ export function openTaskSheet(id) {
           if (decision === 'cut') return cutWithUndo(id);
           horizon = decision;
         }
-        const remindValue = String(data.get('remindAt') || '');
+        const remindValue = rule ? '' : String(data.get('remindAt') || '');
+        const remindTime = rule ? $('#edit-remind-time').value || null : null;
         store.updateTask(id, {
           title,
           note: String(data.get('note') || '').trim(),
           impact,
           horizon,
+          repeat: rule,
+          dueDate,
+          remindTime,
           remindAt: remindValue ? new Date(remindValue).toISOString() : null,
         });
-        if (remindValue && !store.getState().settings.notify.enabled) {
+        const wantsReminder = remindValue || remindTime;
+        if (wantsReminder && !store.getState().settings.notify.enabled) {
           toast('Напоминание сохранено. Включи уведомления в настройках, чтобы оно пришло.', {
             action: { label: 'Настройки', run: () => (location.hash = '#settings') },
             timeout: 7000,
           });
+        } else if (rule && !task.repeat) {
+          toast(`Повтор: ${describeRule(rule)}. Первый раз — ${formatDayKey(dueDate)}.`);
         } else if (remindValue) {
           toast(`Напомню ${formatWhen(remindValue)}`);
         }

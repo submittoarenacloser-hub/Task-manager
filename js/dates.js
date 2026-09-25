@@ -70,6 +70,16 @@ export function formatWhen(date, now = new Date()) {
   return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]} ${time}`;
 }
 
+/** «сегодня», «завтра», «пн, 28 сен», «пт, 25 дек 2027» для ключа дня. */
+export function formatDayKey(key, now = new Date()) {
+  const d = new Date(`${key}T00:00`);
+  const diff = daysBetweenKeys(dayKey(now), key);
+  if (diff === 0) return 'сегодня';
+  if (diff === 1) return 'завтра';
+  const year = d.getFullYear() !== new Date(now).getFullYear() ? ` ${d.getFullYear()}` : '';
+  return `${weekdayShort(d)}, ${d.getDate()} ${MONTHS_GEN[d.getMonth()]}${year}`;
+}
+
 /** Значение для <input type="datetime-local">. */
 export function toLocalInput(date) {
   const d = new Date(date);

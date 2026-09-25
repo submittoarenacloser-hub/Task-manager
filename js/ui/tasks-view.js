@@ -4,7 +4,8 @@ import { esc, icon, toast } from './dom.js';
 import { IMPACTS, IMPACT_IDS, HORIZONS, FILTER_QUESTION, openIn, countByImpact, mainTaskOfDay } from '../model.js';
 import { todayLoad } from '../rules.js';
 import { doneToday, focusShare, trapStatus, carryOver, directStreak } from '../stats.js';
-import { dayKey, daysBetweenKeys, formatWhen, plural } from '../dates.js';
+import { dayKey, daysBetweenKeys, formatWhen, formatDayKey, plural } from '../dates.js';
+import { describeRule } from '../repeat.js';
 import * as store from '../store.js';
 import { ui, refresh } from './ui-state.js';
 import { guardPlacement, openTaskSheet, cutWithUndo, openGoalSheet } from './sheets.js';
@@ -162,7 +163,12 @@ function adder() {
 function taskItem(t, now) {
   const done = t.status === 'done';
   const meta = [`<span class="tag tag-${t.impact}">${IMPACTS[t.impact].label}</span>`];
-  if (!done && t.remindAt) meta.push(`<span class="meta">${icon.bell(13)} ${formatWhen(t.remindAt, now)}</span>`);
+  if (t.repeat) {
+    const when = !done && t.dueDate && t.dueDate > dayKey(now) ? ` · ${formatDayKey(t.dueDate, now)}` : '';
+    meta.push(`<span class="meta">${icon.repeat(13)} ${describeRule(t.repeat)}${when}</span>`);
+  }
+  if (!done && t.repeat && t.remindTime) meta.push(`<span class="meta">${icon.bell(13)} ${t.remindTime}</span>`);
+  if (!done && !t.repeat && t.remindAt) meta.push(`<span class="meta">${icon.bell(13)} ${formatWhen(t.remindAt, now)}</span>`);
   if (!done && t.horizon === 'today' && t.todaySince) {
     const days = daysBetweenKeys(t.todaySince, dayKey(now));
     if (days >= 2) meta.push(`<span class="meta meta-stuck">висит ${days} дн.</span>`);
@@ -256,10 +262,13 @@ export const actions = {
   toggle: (el) => {
     const id = taskId(el);
     const was = store.findTask(id)?.status;
-    store.toggleDone(id);
-    if (was === 'open') {
-      const t = store.findTask(id);
-      if (t.impact === 'direct') toast('Прямая задача сделана. Это и есть движение вперёд.', { tone: 'good' });
+    const next = store.toggleDone(id);
+    if (was !== 'open') return;
+    const t = store.findTask(id);
+    if (next) {
+      toast(`Сделано. Следующий раз — ${formatDayKey(next.dueDate)}.`, { tone: 'good' });
+    } else if (t.impact === 'direct') {
+      toast('Прямая задача сделана. Это и есть движение вперёд.', { tone: 'good' });
     }
   },
   open: (el) => openTaskSheet(taskId(el)),

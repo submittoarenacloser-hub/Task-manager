@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dueNotifications, plannedNotifications, upcoming, DEFAULT_NOTIFY } from '../js/schedule.js';
-import { startFocus } from '../js/focus.js';
+import { startFocus, buildPlan } from '../js/focus.js';
 import { mk, done, FRI } from './helpers.js';
 
 const stateWith = (tasks = [], notify = {}, extra = {}) => ({
@@ -63,11 +63,19 @@ test('напоминание по задаче', () => {
   assert.ok(!kinds(dueNotifications(stateWith([{ ...t, status: 'done' }]), FRI(15, 1))).includes('reminder'));
 });
 
-test('конец фокус-сессии', () => {
-  const t = mk({ id: 'f1' });
-  const s = stateWith([t], {}, { focus: startFocus('f1', 25, FRI(15)) });
-  assert.ok(!kinds(dueNotifications(s, FRI(15, 24))).includes('focus'));
-  assert.ok(kinds(dueNotifications(s, FRI(15, 25))).includes('focus'));
+test('Помодоро: уведомление на каждом переходе', () => {
+  const t = mk({ id: 'f1', title: 'Лендинг' });
+  const focus = startFocus('f1', buildPlan({ focus: 50, brk: 10, total: 120 }), FRI(15));
+  const s = stateWith([t], {}, { focus });
+  assert.ok(!kinds(dueNotifications(s, FRI(15, 49))).includes('focus'));
+  const brk = dueNotifications(s, FRI(15, 50)).find((n) => n.kind === 'focus');
+  assert.equal(brk.title, 'Перерыв 10 мин');
+  assert.match(brk.body, /Круг 1 из 2/);
+  const back = dueNotifications(s, FRI(16, 0), { [brk.key]: 1 }).find((n) => n.kind === 'focus');
+  assert.equal(back.title, 'Перерыв окончен, снова фокус');
+  const planned = plannedNotifications(s, FRI(15, 1), 1).filter((n) => n.kind === 'focus');
+  assert.deepEqual(planned.map((n) => n.title), ['Перерыв 10 мин', 'Перерыв окончен, снова фокус', 'Фокус-сессия окончена']);
+  assert.match(planned[2].body, /Лендинг.*1 ч 40 мин/);
 });
 
 test('сигнал ловушки на третьей косвенной подряд', () => {
@@ -112,4 +120,21 @@ test('текст на будущий день собирается на его �
   const tomorrowEvening = list.find((n) => n.key === 'evening:2026-09-26');
   assert.match(todayEvening.title, /100%/);
   assert.match(tomorrowEvening.title, /пока ничего не отмечено/);
+});
+
+test('повторяющаяся задача напоминает в каждый свой день', () => {
+  const t = mk({
+    title: 'Планёрка',
+    repeat: { unit: 'week', every: 1, weekdays: [1, 2, 3, 4, 5], anchor: '2026-09-25' },
+    dueDate: '2026-09-25',
+    remindTime: '10:00',
+  });
+  const list = plannedNotifications(stateWith([t], { morning: { on: false }, midday: { on: false }, evening: { on: false }, weekly: { on: false } }), FRI(9), 7);
+  assert.deepEqual(
+    list.map((n) => n.key),
+    ['2026-09-25', '2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01'].map((d) => `task:${t.id}:${d}`),
+  );
+  assert.equal(list[0].at.getHours(), 10);
+  const due = dueNotifications(stateWith([t]), FRI(10, 1)).find((n) => n.kind === 'reminder');
+  assert.equal(due.title, 'Планёрка');
 });

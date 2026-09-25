@@ -1,9 +1,19 @@
 // Состояние приложения: хранение в localStorage, действия, подписка на изменения.
 
-import { createTask, withHorizon, uid } from './model.js';
+import { createTask, withHorizon, uid, nextInstance, promoteDue } from './model.js';
+import { nextOccurrence, horizonForDate, addDaysKey } from './repeat.js';
 import { DEFAULT_LIMITS } from './rules.js';
 import { DEFAULT_NOTIFY } from './schedule.js';
-import { startFocus, pauseFocus, resumeFocus, elapsedMs } from './focus.js';
+import {
+  startFocus,
+  pauseFocus,
+  resumeFocus,
+  skipSegment,
+  focusMinutesDone,
+  normalizeFocus,
+  buildPlan,
+  DEFAULT_POMODORO,
+} from './focus.js';
 import { addDays, dayKey, atTime, startOfDay, MINUTE } from './dates.js';
 
 const KEY = 'vector.state.v1';
@@ -20,7 +30,8 @@ export function defaultState() {
     settings: {
       limits: { ...DEFAULT_LIMITS },
       notify: structuredClone(DEFAULT_NOTIFY),
-      focusMinutes: 25,
+      // Помодоро: длина круга фокуса, перерыва и общее время (0 — один круг), в минутах
+      pomodoro: { ...DEFAULT_POMODORO },
     },
   };
 }
@@ -29,7 +40,7 @@ export function defaultState() {
 export function normalize(raw) {
   const base = defaultState();
   if (!raw || typeof raw !== 'object') return base;
-  const settings = raw.settings ?? {};
+  const { focusMinutes, ...settings } = raw.settings ?? {};
   const notify = settings.notify ?? {};
   return {
     ...base,
@@ -38,10 +49,13 @@ export function normalize(raw) {
     goal: { ...base.goal, ...raw.goal },
     tasks: Array.isArray(raw.tasks) ? raw.tasks.filter((t) => t && t.id && t.title) : [],
     sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
+    focus: normalizeFocus(raw.focus),
     settings: {
       ...base.settings,
       ...settings,
       limits: { ...base.settings.limits, ...settings.limits },
+      // прежняя настройка «длина фокус-сессии» становится длиной круга
+      pomodoro: { ...base.settings.pomodoro, ...(focusMinutes ? { focus: focusMinutes } : {}), ...settings.pomodoro },
       notify: {
         ...base.settings.notify,
         ...notify,
@@ -57,7 +71,9 @@ export function normalize(raw) {
 function read() {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? normalize(JSON.parse(raw)) : defaultState();
+    if (!raw) return defaultState();
+    const s = normalize(JSON.parse(raw));
+    return { ...s, tasks: promoteDue(s.tasks) };
   } catch {
     return defaultState();
   }
@@ -122,10 +138,50 @@ export function updateTask(id, patch) {
   });
 }
 
+/**
+ * Отметить задачу сделанной или вернуть в работу.
+ * У повторяющейся задачи при выполнении сразу появляется следующий раз; его возвращает функция.
+ */
 export function toggleDone(id) {
-  patchTask(id, (t) =>
-    t.status === 'done' ? { ...t, status: 'open', doneAt: null } : { ...t, status: 'done', doneAt: nowIso() },
+  const task = findTask(id);
+  if (!task) return null;
+  if (task.status === 'done') {
+    // Вернули в работу: следующий раз, созданный при выполнении, больше не нужен, если его не трогали.
+    const tasks = state.tasks
+      .filter((t) => !(task.nextId && t.id === task.nextId && t.status === 'open'))
+      .map((t) => (t.id === id ? { ...t, status: 'open', doneAt: null, nextId: null } : t));
+    commit({ ...state, tasks });
+    return null;
+  }
+  const next = task.repeat ? nextInstance(task) : null;
+  const tasks = state.tasks.map((t) =>
+    t.id === id ? { ...t, status: 'done', doneAt: nowIso(), nextId: next?.id ?? null } : t,
   );
+  commit({ ...state, tasks: next ? [...tasks, next] : tasks });
+  return next;
+}
+
+/** Пропустить этот раз повторяющейся задачи: она переезжает на следующую дату. */
+export function skipOccurrence(id) {
+  const task = findTask(id);
+  if (!task?.repeat) return null;
+  const today = dayKey();
+  const dueDate = nextOccurrence(task.repeat, task.dueDate && task.dueDate > today ? task.dueDate : today);
+  const horizon = horizonForDate(dueDate, today);
+  patchTask(id, (t) => ({
+    ...t,
+    dueDate,
+    horizon,
+    todaySince: horizon === 'today' ? dueDate : null,
+    carryAck: null,
+  }));
+  return dueDate;
+}
+
+/** Новый день: задачи с датой переезжают ближе к «Сегодня». */
+export function refreshDue() {
+  const tasks = promoteDue(state.tasks);
+  if (tasks !== state.tasks) commit({ ...state, tasks });
 }
 
 export function cutTask(id) {
@@ -161,8 +217,23 @@ export function ackCarry(ids) {
 
 // ——— фокус-сессия ———
 
-export function beginFocus(taskId, minutes = state.settings.focusMinutes) {
-  commit({ ...state, focus: startFocus(taskId, minutes) });
+/** Начать сессию по настройкам Помодоро (они же запоминаются на следующий раз). */
+export function beginFocus(taskId, pomodoro = state.settings.pomodoro) {
+  commit({
+    ...state,
+    settings: { ...state.settings, pomodoro: { ...pomodoro } },
+    focus: startFocus(taskId, buildPlan(pomodoro)),
+  });
+}
+
+/** Пропустить перерыв или закончить круг раньше. */
+export function skipFocusSegment() {
+  commit({ ...state, focus: skipSegment(state.focus) });
+}
+
+/** Запомнить выбор длительностей без запуска таймера. */
+export function setPomodoro(pomodoro) {
+  commit({ ...state, settings: { ...state.settings, pomodoro: { ...pomodoro } } });
 }
 
 export function pauseCurrentFocus() {
@@ -174,18 +245,20 @@ export function resumeCurrentFocus() {
 }
 
 /** Завершить сессию и записать потраченные минуты (если набралась хотя бы минута). */
+/**
+ * Завершить сессию и записать минуты фокуса без перерывов (если набралась хотя бы минута).
+ * markDone — ещё и отметить задачу сделанной (у повторяющейся появится следующий раз).
+ */
 export function endFocus({ markDone = false } = {}) {
   const f = state.focus;
-  if (!f) return;
+  if (!f) return null;
   const task = findTask(f.taskId);
-  const minutes = Math.min(f.minutes, Math.round(elapsedMs(f) / MINUTE));
+  const minutes = focusMinutesDone(f);
   const sessions = minutes >= 1 && task
     ? [...state.sessions, { taskId: f.taskId, impact: task.impact, minutes, endedAt: nowIso() }]
     : state.sessions;
-  const tasks = markDone
-    ? state.tasks.map((t) => (t.id === f.taskId ? { ...t, status: 'done', doneAt: nowIso() } : t))
-    : state.tasks;
-  commit({ ...state, focus: null, sessions: sessions.slice(-500), tasks });
+  commit({ ...state, focus: null, sessions: sessions.slice(-500) });
+  return markDone && task?.status === 'open' ? toggleDone(f.taskId) : null;
 }
 
 // ——— данные ———
@@ -219,6 +292,15 @@ export function loadSample() {
     id: uid(),
     ...extra,
   });
+  const today = dayKey(now);
+  const quarterDay = dayKey(new Date(now.getFullYear(), now.getMonth() + 1, 25));
+  // Повторяющаяся задача: первый раз — ближайший подходящий день начиная с start.
+  const repeating = (rule, start, remindTime) => {
+    const repeat = { ...rule, anchor: start };
+    const dueDate = nextOccurrence(repeat, addDaysKey(start, -1));
+    const horizon = horizonForDate(dueDate, today);
+    return { repeat, dueDate, remindTime, horizon, todaySince: horizon === 'today' ? dueDate : null };
+  };
   const done = (title, impact, days, time) =>
     t(title, impact, 'today', {
       status: 'done',
@@ -233,6 +315,8 @@ export function loadSample() {
     t('Провести три демо-встречи', 'direct', 'week'),
     t('Запустить рекламу на новый оффер', 'direct', 'week'),
     t('Посмотреть вебинар про воронки', 'indirect', 'week'),
+    t('Планёрка с командой', 'indirect', 'today', repeating({ unit: 'week', every: 1, weekdays: [1, 2, 3, 4, 5] }, today, '10:00')),
+    t('Отчёт и налоги за квартал', 'direct', 'later', repeating({ unit: 'month', every: 3 }, quarterDay, '09:00')),
     t('Переделать логотип', 'indirect', 'month'),
     t('Собрать отзывы клиентов для сайта', 'indirect', 'month'),
     t('Разобрать старые письма в почте', 'noise', 'later'),
