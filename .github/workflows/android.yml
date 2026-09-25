@@ -33,6 +33,9 @@ jobs:
           cache: gradle
 
       - uses: android-actions/setup-android@v3
+        with:
+          # пакет по умолчанию «tools» больше не существует; платформу и build-tools Gradle докачает сам
+          packages: platform-tools
 
       - name: Зависимости
         run: npm ci
