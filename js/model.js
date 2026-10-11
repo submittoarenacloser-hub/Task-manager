@@ -50,8 +50,21 @@ export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+/** Категории дел по дому (раздел «Дом»): они живут отдельно от рабочих задач и фокуса. */
+export const LIFE_CATEGORIES = [
+  { id: 'home', label: 'Дом' },
+  { id: 'car', label: 'Машина' },
+  { id: 'health', label: 'Здоровье' },
+  { id: 'money', label: 'Платежи' },
+  { id: 'other', label: 'Другое' },
+];
+export const categoryLabel = (id) => LIFE_CATEGORIES.find((c) => c.id === id)?.label ?? 'Другое';
+
+/** Дело по дому: у таких задач горизонт 'life', в рабочие списки и статистику они не попадают. */
+export const isLife = (t) => t.horizon === 'life';
+
 export function createTask(fields, now = new Date()) {
-  const horizon = HORIZON_IDS.includes(fields.horizon) ? fields.horizon : 'today';
+  const horizon = HORIZON_IDS.includes(fields.horizon) || fields.horizon === 'life' ? fields.horizon : 'today';
   return {
     id: fields.id ?? uid(),
     title: String(fields.title ?? '').trim(),
@@ -69,10 +82,13 @@ export function createTask(fields, now = new Date()) {
     carryAck: null,
     order: 0,
     // Повтор: правило (repeat.js), дата ближайшего раза и время напоминания каждый раз.
-    repeat: null,
-    dueDate: null,
-    remindTime: null,
+    repeat: fields.repeat ?? null,
+    dueDate: fields.dueDate ?? null,
+    remindTime: fields.remindTime ?? null,
     nextId: null,
+    // Сколько рабочих дней займёт задача: пока они идут, она не считается хвостом.
+    durationDays: 1,
+    category: horizon === 'life' ? fields.category ?? 'home' : null,
   };
 }
 
@@ -127,7 +143,7 @@ export function nextInstance(task, now = new Date()) {
   const today = dayKey(now);
   const from = task.dueDate && task.dueDate > today ? task.dueDate : today;
   const dueDate = nextOccurrence(task.repeat, from);
-  const horizon = horizonForDate(dueDate, today);
+  const horizon = isLife(task) ? 'life' : horizonForDate(dueDate, today);
   return {
     ...task,
     id: uid(),
@@ -153,7 +169,7 @@ export function promoteDue(tasks, now = new Date()) {
   const today = dayKey(now);
   let changed = false;
   const out = tasks.map((t) => {
-    if (!isOpen(t) || !t.dueDate) return t;
+    if (!isOpen(t) || !t.dueDate || isLife(t)) return t;
     const target = horizonForDate(t.dueDate, today);
     if (HORIZON_RANK[target] >= HORIZON_RANK[t.horizon]) return t;
     changed = true;

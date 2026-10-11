@@ -9,7 +9,8 @@ const stateWith = (tasks = [], notify = {}, extra = {}) => ({
   tasks,
   sessions: [],
   focus: null,
-  settings: { notify: { ...structuredClone(DEFAULT_NOTIFY), enabled: true, ...notify } },
+  // без выходных, чтобы проверять расписание само по себе; выходные — в отдельных тестах
+  settings: { daysOff: [], notify: { ...structuredClone(DEFAULT_NOTIFY), enabled: true, ...notify } },
   ...extra,
 });
 
@@ -89,9 +90,10 @@ test('сигнал ловушки на третьей косвенной под�
 
 test('upcoming отдаёт ближайшие по времени', () => {
   const list = upcoming(stateWith(), FRI(12), 3);
-  assert.deepEqual(list.map((x) => x.title), ['Проверка курса', 'Итог дня', 'План на день']);
+  // разбор недели по умолчанию — в пятницу в 17:00
+  assert.deepEqual(list.map((x) => x.title), ['Проверка курса', 'Разбор недели (пятница)', 'Итог дня']);
   assert.equal(list[0].when, 'сегодня 13:30');
-  assert.equal(list[2].when, 'завтра 09:00');
+  assert.equal(list[2].when, 'сегодня 20:30');
 });
 
 test('only оставляет только нужные виды (в Android остальное планирует система)', () => {
@@ -106,8 +108,8 @@ test('план на неделю: только будущее, по порядк
   const list = plannedNotifications(stateWith([t]), FRI(12), 7);
   assert.ok(list.every((n) => n.at > FRI(12)));
   assert.ok(list.every((n, i) => i === 0 || list[i - 1].at <= n.at));
-  assert.deepEqual(list.slice(0, 3).map((n) => n.kind), ['midday', 'reminder', 'evening']);
-  // 7 дней × 3 ежедневных (сегодняшнее утро уже прошло) + воскресный разбор + напоминание
+  assert.deepEqual(list.slice(0, 4).map((n) => n.kind), ['midday', 'reminder', 'weekly', 'evening']);
+  // 7 дней × 3 ежедневных (сегодняшнее утро уже прошло) + разбор в пятницу + напоминание
   assert.equal(list.length, 7 * 3 - 1 + 1 + 1);
   assert.ok(list.every((n) => n.title && n.body && n.key));
   assert.deepEqual(plannedNotifications(stateWith([], { enabled: false }), FRI(12)), []);
@@ -137,4 +139,65 @@ test('повторяющаяся задача напоминает в кажды
   assert.equal(list[0].at.getHours(), 10);
   const due = dueNotifications(stateWith([t]), FRI(10, 1)).find((n) => n.kind === 'reminder');
   assert.equal(due.title, 'Планёрка');
+});
+
+// ——— выходные ———
+
+const withDaysOff = (tasks = [], notify = {}, daysOff = [6, 0]) => {
+  const s = stateWith(tasks, notify);
+  s.settings.daysOff = daysOff;
+  return s;
+};
+const SAT = (h = 12, m = 0) => new Date(2026, 8, 26, h, m);
+
+test('в выходной рабочие уведомления не приходят', () => {
+  const s = withDaysOff([mk({ impact: 'direct' })]);
+  assert.deepEqual(dueNotifications(s, SAT(9, 5)), []);
+  // план на неделю пропускает субботу и воскресенье
+  const days = new Set(plannedNotifications(s, FRI(21), 4).map((n) => n.key.split(':')[1]));
+  assert.ok(!days.has('2026-09-26') && !days.has('2026-09-27'));
+  assert.ok(days.has('2026-09-28'));
+});
+
+test('разбор недели в выходной переезжает на последний рабочий день', async () => {
+  const { weeklyReviewDay } = await import('../js/schedule.js');
+  assert.equal(weeklyReviewDay(0, [6, 0]), 5);
+  assert.equal(weeklyReviewDay(5, [6, 0]), 5);
+  assert.equal(weeklyReviewDay(5, [5, 6]), 4);
+  const s = withDaysOff([], { weekly: { on: true, day: 0, time: '18:00' } });
+  assert.ok(kinds(dueNotifications(s, FRI(18, 5))).includes('weekly'));
+});
+
+test('разовое напоминание по работе в субботу приходит в понедельник в то же время', () => {
+  const t = mk({ title: 'Отправить счёт', remindAt: SAT(10).toISOString() });
+  const list = plannedNotifications(withDaysOff([t]), FRI(20), 4).filter((n) => n.kind === 'reminder');
+  assert.equal(list.length, 1);
+  assert.equal(list[0].at.getDay(), 1);
+  assert.equal(list[0].at.getHours(), 10);
+});
+
+test('повторяющаяся рабочая задача не напоминает в выходные', () => {
+  const t = mk({ title: 'Зарядка', repeat: { unit: 'day', every: 1, anchor: '2026-09-25' }, dueDate: '2026-09-25', remindTime: '08:00' });
+  const dates = plannedNotifications(withDaysOff([t]), FRI(7), 4)
+    .filter((n) => n.kind === 'reminder')
+    .map((n) => n.key.split(':')[2]);
+  assert.deepEqual(dates, ['2026-09-25', '2026-09-28']);
+});
+
+test('дела по дому напоминают и в выходные, в общее время для дел', () => {
+  const filter = mk({
+    title: 'Заменить фильтр воды',
+    horizon: 'life',
+    category: 'home',
+    repeat: { unit: 'month', every: 3, anchor: '2026-09-26' },
+    dueDate: '2026-09-26',
+  });
+  const s = withDaysOff([filter]);
+  s.settings.lifeRemindTime = '10:00';
+  const n = dueNotifications(s, SAT(10, 1)).find((x) => x.kind === 'reminder');
+  assert.equal(n.title, 'Заменить фильтр воды');
+  assert.equal(n.url, '#life');
+  assert.match(n.body, /Дом/);
+  s.settings.lifeRemindTime = null;
+  assert.equal(dueNotifications(s, SAT(10, 1)).length, 0);
 });

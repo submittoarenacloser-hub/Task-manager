@@ -1,8 +1,9 @@
 // Настройки: цель, правила фокуса, уведомления, данные.
 
 import { esc, icon, toast, openSheet } from './dom.js';
-import { WEEKDAYS_FULL } from '../dates.js';
-import { upcoming } from '../schedule.js';
+import { WEEKDAYS_FULL, WEEKDAYS_ON, DEFAULT_DAYS_OFF, plural } from '../dates.js';
+import { WEEKDAY_ORDER } from '../repeat.js';
+import { upcoming, weeklyReviewDay } from '../schedule.js';
 import { permission, requestPermission, show } from '../notifier.js';
 import { isNative, exactAlarmState, openExactAlarmSettings, shareBackup } from '../native.js';
 import * as store from '../store.js';
@@ -22,6 +23,8 @@ const PERMISSION_TEXT = isNative
       unsupported: 'Этот браузер не показывает системные уведомления. На iPhone сначала добавь приложение на экран «Домой».',
     };
 
+const WD_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
 const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone = () =>
   window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -39,6 +42,8 @@ function row(key, label, hint, cfg) {
 
 export function render(state) {
   const n = state.settings.notify;
+  const daysOff = state.settings.daysOff ?? DEFAULT_DAYS_OFF;
+  const reviewDay = weeklyReviewDay(n.weekly.day, daysOff);
   const perm = permission();
   const next = upcoming(state, new Date(), 4);
   const { limits } = state.settings;
@@ -67,6 +72,17 @@ export function render(state) {
     </section>
 
     <section class="panel">
+      <h2>Рабочая неделя</h2>
+      <p class="field-hint">Отметь свои выходные. В эти дни не приходят уведомления о работе, а сами дни не идут в счёт «висит N дней», хвостов и серий. Дела по дому напоминают и в выходные.</p>
+      <div class="weekday-pick" role="group" aria-label="Выходные дни">
+        ${WEEKDAY_ORDER.map(
+          (d) => `<button type="button" class="wd wd-off" data-action="day-off" data-wd="${d}" aria-pressed="${daysOff.includes(d)}">${WD_SHORT[d]}</button>`,
+        ).join('')}
+      </div>
+      <p class="field-hint">Выходные: ${daysOff.length ? WEEKDAY_ORDER.filter((d) => daysOff.includes(d)).map((d) => WD_SHORT[d]).join(', ') : 'нет'} · рабочих дней в неделе: ${7 - daysOff.length}</p>
+    </section>
+
+    <section class="panel">
       <h2>Уведомления</h2>
       <div class="set-row master">
         <label class="switch">
@@ -83,7 +99,11 @@ export function render(state) {
           <label class="switch">
             <input type="checkbox" id="n-weekly" data-notify="weekly" ${n.weekly.on ? 'checked' : ''}>
             <span class="switch-ui" aria-hidden="true"></span>
-            <span class="switch-text"><b>Разбор недели 80/20</b><small>раз в неделю: отсечь лишнее</small></span>
+            <span class="switch-text"><b>Разбор недели 80/20</b><small>${
+              reviewDay === Number(n.weekly.day)
+                ? 'раз в неделю: отсечь лишнее'
+                : `${WEEKDAYS_FULL[n.weekly.day]} — выходной, разбор придёт ${WEEKDAYS_ON[reviewDay]}`
+            }</small></span>
           </label>
           <span class="row gap-s">
             <select id="n-weekly-day" data-weekly-day aria-label="День разбора">
@@ -105,6 +125,14 @@ export function render(state) {
             <span class="switch-ui" aria-hidden="true"></span>
             <span class="switch-text"><b>Напоминания по задачам</b><small>время ставится в карточке задачи</small></span>
           </label>
+        </div>
+        <div class="set-row">
+          <label class="switch">
+            <input type="checkbox" id="n-life" data-life-flag ${state.settings.lifeRemindTime ? 'checked' : ''}>
+            <span class="switch-ui" aria-hidden="true"></span>
+            <span class="switch-text"><b>Дела по дому</b><small>в день срока, и в выходные тоже</small></span>
+          </label>
+          <input type="time" id="n-life-time" data-life-time value="${state.settings.lifeRemindTime ?? '10:00'}" ${state.settings.lifeRemindTime ? '' : 'disabled'} aria-label="Время напоминаний о делах по дому">
         </div>
       </fieldset>
       <div class="row gap wrap">
@@ -134,6 +162,7 @@ export function render(state) {
 
     <section class="panel">
       <h2>Приложение</h2>
+      <a class="btn small fit" href="#guide">Как пользоваться Вектором</a>
       ${
         isNative
           ? '<p class="muted">Приложение для Android.</p>'
@@ -175,6 +204,19 @@ export const actions = {
         { tone: 'warn', timeout: 7000 },
       );
     }
+  },
+  'day-off': (el) => {
+    const d = Number(el.dataset.wd);
+    const current = store.getState().settings.daysOff ?? DEFAULT_DAYS_OFF;
+    const next = current.includes(d) ? current.filter((x) => x !== d) : [...current, d];
+    if (next.length >= 7) {
+      toast('Нужен хотя бы один рабочий день.', { tone: 'warn' });
+      return;
+    }
+    store.updateSettings((s) => {
+      s.daysOff = next;
+      return s;
+    });
   },
   'exact-alarms': async () => {
     await openExactAlarmSettings();
@@ -265,6 +307,17 @@ export function onChange(e) {
   } else if (el.dataset.weeklyDay !== undefined) {
     store.updateSettings((s) => {
       s.notify.weekly.day = Number(el.value);
+      return s;
+    }, silent);
+  } else if (el.dataset.lifeFlag !== undefined) {
+    store.updateSettings((s) => {
+      s.lifeRemindTime = el.checked ? document.getElementById('n-life-time')?.value || '10:00' : null;
+      return s;
+    });
+  } else if (el.dataset.lifeTime !== undefined) {
+    if (!el.value) return;
+    store.updateSettings((s) => {
+      s.lifeRemindTime = el.value;
       return s;
     }, silent);
   } else if (el.dataset.notifyFlag) {

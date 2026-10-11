@@ -3,8 +3,8 @@
 import { esc, icon, toast } from './dom.js';
 import { IMPACTS, IMPACT_IDS, HORIZONS, FILTER_QUESTION, openIn, countByImpact, mainTaskOfDay } from '../model.js';
 import { todayLoad } from '../rules.js';
-import { doneToday, focusShare, trapStatus, carryOver, directStreak } from '../stats.js';
-import { dayKey, daysBetweenKeys, formatWhen, formatDayKey, plural } from '../dates.js';
+import { doneToday, focusShare, trapStatus, carryOver, directStreak, todayProgress } from '../stats.js';
+import { dayKey, formatWhen, formatDayKey, plural, isDayOff, DEFAULT_DAYS_OFF } from '../dates.js';
 import { describeRule } from '../repeat.js';
 import * as store from '../store.js';
 import { ui, refresh } from './ui-state.js';
@@ -58,10 +58,14 @@ function goalBar(state) {
   </section>`;
 }
 
+const calOf = (state) => ({ daysOff: state.settings.daysOff ?? DEFAULT_DAYS_OFF });
+const isOffToday = (state, now) => isDayOff(dayKey(now), calOf(state).daysOff);
+const daysWord = (n) => plural(n, ['день', 'дня', 'дней']);
+
 function meter(state, now) {
   const done = countByImpact(doneToday(state.tasks, now));
   const share = focusShare(done);
-  const streak = directStreak(state.tasks, now);
+  const streak = directStreak(state.tasks, now, calOf(state));
   const main = mainTaskOfDay(state.tasks);
   const segs = IMPACT_IDS.filter((k) => done[k])
     .map((k) => `<i class="seg seg-${k}" style="flex-grow:${done[k]}" title="${IMPACTS[k].label}: ${done[k]}"></i>`)
@@ -87,8 +91,32 @@ function meter(state, now) {
   </section>`;
 }
 
+function dayOffBanner() {
+  return `<section class="dayoff" role="status">
+    <div class="radar-head">${icon.coffee(18)}<b>Сегодня выходной</b></div>
+    <p>Уведомлений о работе нет, и этот день не идёт в счёт. Отдохни: задачи подождут до рабочего дня.</p>
+  </section>`;
+}
+
+/** Дела по дому на сегодня: отдельный раздел, здесь только ссылка. */
+function lifeLine(state, now) {
+  const today = dayKey(now);
+  const due = state.tasks.filter((t) => t.horizon === 'life' && t.status === 'open' && t.dueDate && t.dueDate <= today).length;
+  if (!due) return '';
+  return `<a class="life-line" href="#life">${icon.home(18)}<span>Дом: ${due} ${plural(due, ['дело', 'дела', 'дел'])} на сегодня</span>${icon.arrow(16)}</a>`;
+}
+
+function guideLine(state) {
+  if (state.guideSeen) return '';
+  return `<div class="guide-line">
+    <a href="#guide">${icon.help(18)}<span>Как пользоваться Вектором: короткий гид</span>${icon.arrow(16)}</a>
+    <button type="button" class="icon-btn" data-action="hide-guide" aria-label="Скрыть">${icon.close(16)}</button>
+  </div>`;
+}
+
 function radar(state, now) {
-  const trap = trapStatus(state.tasks, now);
+  if (isOffToday(state, now)) return dayOffBanner();
+  const trap = trapStatus(state.tasks, now, calOf(state));
   if (trap.level === 'ok') return '';
   const head = trap.level === 'trap' ? 'Похоже на ловушку занятости' : 'Проверь курс';
   return `<section class="radar radar-${trap.level}" role="status">
@@ -99,17 +127,19 @@ function radar(state, now) {
 }
 
 function carryBanner(state, now) {
-  const list = carryOver(state.tasks, now);
+  if (isOffToday(state, now)) return ''; // хвосты разберём в рабочий день
+  const cal = calOf(state);
+  const list = carryOver(state.tasks, now, cal);
   if (!list.length) return '';
-  const today = dayKey(now);
   return `<section class="carry">
     <p><b>С прошлых дней осталось ${list.length} ${plural(list.length, ['задача', 'задачи', 'задач'])}.</b> Реши по каждой: оставить, перенести или отсечь.</p>
     <ul class="carry-list">${list
       .map((t) => {
-        const days = daysBetweenKeys(t.todaySince, today);
+        const p = todayProgress(t, now, cal);
+        const label = p.duration > 1 ? `${p.missed} из ${p.duration} дн.` : `${p.missed} дн.`;
         return `<li data-id="${t.id}">
           <span class="dot dot-${t.impact}" aria-hidden="true"></span>
-          <span class="carry-title">${esc(t.title)} <small>${days} дн.</small></span>
+          <span class="carry-title">${esc(t.title)} <small>${label}</small></span>
           <span class="carry-actions">
             <button type="button" class="btn small" data-action="carry-keep">Оставить</button>
             <button type="button" class="btn small quiet" data-action="carry-week">В неделю</button>
@@ -160,7 +190,7 @@ function adder() {
   </form>`;
 }
 
-function taskItem(t, now) {
+function taskItem(t, now, cal = {}) {
   const done = t.status === 'done';
   const meta = [`<span class="tag tag-${t.impact}">${IMPACTS[t.impact].label}</span>`];
   if (t.repeat) {
@@ -169,9 +199,14 @@ function taskItem(t, now) {
   }
   if (!done && t.repeat && t.remindTime) meta.push(`<span class="meta">${icon.bell(13)} ${t.remindTime}</span>`);
   if (!done && !t.repeat && t.remindAt) meta.push(`<span class="meta">${icon.bell(13)} ${formatWhen(t.remindAt, now)}</span>`);
+  const duration = t.durationDays ?? 1;
   if (!done && t.horizon === 'today' && t.todaySince) {
-    const days = daysBetweenKeys(t.todaySince, dayKey(now));
-    if (days >= 2) meta.push(`<span class="meta meta-stuck">висит ${days} дн.</span>`);
+    const p = todayProgress(t, now, cal);
+    if (duration > 1 && !p.overdue) meta.push(`<span class="meta">${icon.clock(13)} день ${p.day} из ${duration}</span>`);
+    else if (duration > 1) meta.push(`<span class="meta meta-stuck">дольше плана: день ${p.day} из ${duration}</span>`);
+    else if (p.stuck) meta.push(`<span class="meta meta-stuck">висит ${p.missed} дн.</span>`);
+  } else if (!done && duration > 1) {
+    meta.push(`<span class="meta">${icon.clock(13)} на ${duration} ${daysWord(duration)}</span>`);
   }
   if (t.note) meta.push(`<span class="meta meta-note">${esc(t.note.split('\n')[0].slice(0, 60))}</span>`);
 
@@ -196,6 +231,7 @@ function taskItem(t, now) {
 }
 
 function column(state, h, now) {
+  const cal = calOf(state);
   const open = openIn(state.tasks, h.id);
   const weekAgo = now.getTime() - 7 * 864e5;
   const done = state.tasks
@@ -207,12 +243,12 @@ function column(state, h, now) {
       <h2>${h.label}</h2>
       <span class="col-n">${load ? `${load.total} из ${load.limit}` : open.length}</span>
     </header>
-    ${open.length ? `<ul class="tasks">${open.map((t) => taskItem(t, now)).join('')}</ul>` : `<p class="empty">${EMPTY[h.id]}</p>`}
+    ${open.length ? `<ul class="tasks">${open.map((t) => taskItem(t, now, cal)).join('')}</ul>` : `<p class="empty">${EMPTY[h.id]}</p>`}
     ${
       done.length
         ? `<details class="done" data-horizon="${h.id}" ${ui.showDone[h.id] ? 'open' : ''}>
             <summary>Сделано за неделю · ${done.length}</summary>
-            <ul class="tasks">${done.map((t) => taskItem(t, now)).join('')}</ul>
+            <ul class="tasks">${done.map((t) => taskItem(t, now, cal)).join('')}</ul>
           </details>`
         : ''
     }
@@ -223,10 +259,12 @@ export function render(state) {
   if (!state.onboarded) return renderOnboarding();
   const now = new Date();
   return `
+    ${guideLine(state)}
     ${goalBar(state)}
     ${meter(state, now)}
     ${radar(state, now)}
     ${carryBanner(state, now)}
+    ${lifeLine(state, now)}
     <div class="board-wrap">
       ${tabs(state)}
       ${adder()}
@@ -247,7 +285,10 @@ async function moveToToday(id) {
 
 export const actions = {
   'edit-goal': () => openGoalSheet(),
-  sample: () => store.loadSample(),
+  sample: () => {
+    store.loadSample();
+    if (!store.getState().guideSeen) location.hash = '#guide';
+  },
   tab: (el) => {
     ui.horizon = el.dataset.horizon;
     ui.draft.horizon = null;
@@ -280,7 +321,11 @@ export const actions = {
   'to-today': (el) => moveToToday(taskId(el)),
   'carry-keep': (el) => store.ackCarry([taskId(el)]),
   'carry-week': (el) => store.updateTask(taskId(el), { horizon: 'week' }),
-  'carry-all': () => store.ackCarry(carryOver(store.getState().tasks).map((t) => t.id)),
+  'carry-all': () => {
+    const state = store.getState();
+    store.ackCarry(carryOver(state.tasks, new Date(), calOf(state)).map((t) => t.id));
+  },
+  'hide-guide': () => store.markGuideSeen(),
 };
 
 export const submit = {
@@ -289,6 +334,8 @@ export const submit = {
     const title = String(data.get('title')).trim();
     if (!title) return form.querySelector('#onb-goal').focus();
     store.setGoal({ title, metric: String(data.get('metric')).trim() });
+    // новичку — короткий гид по приложению
+    if (!store.getState().guideSeen) location.hash = '#guide';
   },
   adder: async (form) => {
     const title = ui.draft.title.trim();

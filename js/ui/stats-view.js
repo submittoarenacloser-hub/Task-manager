@@ -3,7 +3,9 @@
 import { esc } from './dom.js';
 import { IMPACTS, IMPACT_IDS } from '../model.js';
 import { dailySeries, weekSummary, focusMinutes, directStreak, trapStatus } from '../stats.js';
-import { addDays, startOfDay, weekdayShort, formatDuration, plural, WEEKDAYS_ON } from '../dates.js';
+import { addDays, startOfDay, weekdayShort, formatDuration, plural, isDayOff, WEEKDAYS_ON, DEFAULT_DAYS_OFF } from '../dates.js';
+
+const daysOffOf = (state) => state.settings.daysOff ?? DEFAULT_DAYS_OFF;
 
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const dayLabel = (d) => `${weekdayShort(d)}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
@@ -14,7 +16,7 @@ function niceScale(max) {
   return { max: Math.ceil(top / step) * step, step };
 }
 
-function chart(series) {
+function chart(series, daysOff = []) {
   const { max, step } = niceScale(Math.max(...series.map((d) => d.total)));
   const ticks = [];
   for (let v = 0; v <= max; v += step) ticks.push(v);
@@ -38,7 +40,7 @@ function chart(series) {
                 ${['noise', 'indirect', 'direct'].filter((k) => d[k]).map((k) => `<i class="seg-${k}" style="flex-grow:${d[k]}"></i>`).join('')}
               </div>
             </div>
-            <span class="ccol-label ${i === last ? 'is-today' : ''}">${i === last ? 'сегодня' : weekdayShort(d.date)}</span>
+            <span class="ccol-label ${i === last ? 'is-today' : ''} ${isDayOff(d.key, daysOff) ? 'is-off' : ''}">${i === last ? 'сегодня' : weekdayShort(d.date)}</span>
             <span class="tip" role="tooltip">${esc(tip)}</span>
           </div>`;
         })
@@ -73,7 +75,7 @@ function insights(state, series, now) {
   }
   const noise = series.reduce((s, d) => s + d.noise, 0);
   if (noise >= 3) out.push(`За неделю сделано ${noise} ${plural(noise, ['задача', 'задачи', 'задач'])} из категории «шум». Такие лучше отсекать сразу при добавлении.`);
-  for (const r of trapStatus(state.tasks, now).reasons) {
+  for (const r of trapStatus(state.tasks, now, { daysOff: daysOffOf(state) }).reasons) {
     if (r.code !== 'no-direct') out.push(r.message);
   }
   return out;
@@ -85,7 +87,7 @@ export function render(state) {
   const week = weekSummary(state.tasks, now);
   const end = addDays(startOfDay(now), 1);
   const mins = focusMinutes(state.sessions, addDays(end, -7), end);
-  const streak = directStreak(state.tasks, now);
+  const streak = directStreak(state.tasks, now, { daysOff: daysOffOf(state) });
   const pct = week.share === null ? null : Math.round(week.share * 100);
   const prevPct = week.prevShare === null ? null : Math.round(week.prevShare * 100);
   const delta = pct !== null && prevPct !== null ? pct - prevPct : null;
@@ -122,7 +124,7 @@ export function render(state) {
       </div>
     </div>
 
-    ${chart(series)}
+    ${chart(series, daysOffOf(state))}
 
     <section class="panel">
       <h2>Время в фокусе</h2>

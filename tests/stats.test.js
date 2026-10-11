@@ -112,3 +112,49 @@ test('focusMinutes суммирует сессии по типам', () => {
   const m = focusMinutes(sessions, day, addDays(day, 1));
   assert.deepEqual([m.direct, m.indirect, m.total], [50, 25, 75]);
 });
+
+// ——— выходные и длительность ———
+
+const MON = (h = 12) => new Date(2026, 8, 28, h); // понедельник после выходных
+const off = { daysOff: [6, 0] };
+
+test('выходные не считаются в «висит N дней» и хвостах', () => {
+  const fromFri = mk({ impact: 'direct', id: 'fri', todaySince: '2026-09-25' });
+  const fromSat = mk({ impact: 'direct', id: 'sat', todaySince: '2026-09-26' });
+  const fromThu = mk({ impact: 'direct', id: 'thu', todaySince: '2026-09-24' });
+  const tasks = [fromFri, fromSat, fromThu];
+  // пятница прошла несделанной — это хвост; суббота — выходной, не хвост
+  assert.deepEqual(carryOver(tasks, MON(), off).map((t) => t.id).sort(), ['fri', 'thu']);
+  // с четверга прошло 2 рабочих дня (чт, пт), а не 4 календарных
+  assert.deepEqual(stuckDirect(tasks, MON(), off).map((x) => [x.task.id, x.days]), [['thu', 2]]);
+  // без выходных всё по-старому
+  assert.deepEqual(stuckDirect(tasks, MON()).map((x) => x.task.id).sort(), ['fri', 'sat', 'thu']);
+});
+
+test('задача на несколько дней не хвост и не зависшая, пока её дни идут', async () => {
+  const { todayProgress } = await import('../js/stats.js');
+  const t = mk({ impact: 'direct', id: 'big', todaySince: '2026-09-23', durationDays: 3 }); // с ср
+  assert.deepEqual(
+    (({ day, duration, overdue, stuck }) => ({ day, duration, overdue, stuck }))(todayProgress(t, FRI(), off)),
+    { day: 3, duration: 3, overdue: false, stuck: false },
+  );
+  assert.equal(carryOver([t], FRI(), off).length, 0);
+  // понедельник: прошли ср, чт, пт — три дня истекли, это уже хвост; во вторник — зависшая
+  assert.equal(carryOver([t], MON(), off).length, 1);
+  assert.equal(stuckDirect([t], MON(), off).length, 0);
+  assert.equal(stuckDirect([t], new Date(2026, 8, 29, 12), off).length, 1);
+  assert.match(trapStatus([t], new Date(2026, 8, 29, 12), off).reasons.find((r) => r.code === 'stuck').message, /рассчитана на 3 дня/);
+});
+
+test('серия прямых не прерывается выходными', () => {
+  const tasks = [done('direct', FRI(10)), done('direct', addDays(FRI(), -1))];
+  assert.equal(directStreak(tasks, MON(9), off), 2);
+  assert.equal(directStreak(tasks, MON(9)), 0);
+  assert.equal(directStreak([...tasks, done('direct', MON(10))], MON(11), off), 3);
+});
+
+test('дела по дому не входят в статистику работы', () => {
+  const life = mk({ horizon: 'life', status: 'done', doneAt: FRI(10).toISOString(), impact: 'direct' });
+  assert.equal(dailySeries([life], FRI(), 7)[6].total, 0);
+  assert.equal(paretoSnapshot([mk({ horizon: 'life' })]).total, 0);
+});

@@ -1,6 +1,6 @@
 // Статистика и «радар ловушки»: не уходит ли время в косвенные задачи.
 
-import { addDays, dayKey, daysBetweenKeys, startOfDay, plural, DAY } from './dates.js';
+import { addDays, dayKey, startOfDay, plural, isDayOff, workdaysBetween, DAY } from './dates.js';
 import { countByImpact, openIn, isOpen } from './model.js';
 
 const within = (iso, from, to) => {
@@ -9,8 +9,11 @@ const within = (iso, from, to) => {
   return t >= from.getTime() && t < to.getTime();
 };
 
+/** Рабочие задачи: дела по дому (раздел «Дом») в фокус и статистику не входят. */
+export const isWork = (t) => t.horizon !== 'life';
+
 export function doneBetween(tasks, from, to) {
-  return tasks.filter((t) => t.status === 'done' && within(t.doneAt, from, to));
+  return tasks.filter((t) => isWork(t) && t.status === 'done' && within(t.doneAt, from, to));
 }
 
 /** Доля прямых среди выполненных, 0..1, или null если ничего не сделано. */
@@ -60,19 +63,40 @@ export function focusMinutes(sessions = [], from, to) {
 }
 
 /** Сколько дней подряд (до сегодня включительно) сделана хотя бы одна прямая задача. */
-export function directStreak(tasks, now = new Date()) {
+/**
+ * Сколько дней подряд сделана хотя бы одна прямая задача.
+ * Выходные серию не прерывают; сегодняшний день, пока не закончился, тоже.
+ */
+export function directStreak(tasks, now = new Date(), { daysOff = [] } = {}) {
   const days = new Set(
-    tasks.filter((t) => t.status === 'done' && t.impact === 'direct' && t.doneAt).map((t) => dayKey(t.doneAt)),
+    tasks
+      .filter((t) => isWork(t) && t.status === 'done' && t.impact === 'direct' && t.doneAt)
+      .map((t) => dayKey(t.doneAt)),
   );
-  let day = startOfDay(now);
-  // Сегодня ещё не вечер: если сегодня пока пусто, серия считается со вчера.
-  if (!days.has(dayKey(day))) day = addDays(day, -1);
+  const today = dayKey(now);
   let n = 0;
-  while (days.has(dayKey(day))) {
-    n += 1;
-    day = addDays(day, -1);
+  for (let day = startOfDay(now), i = 0; i < 400; day = addDays(day, -1), i++) {
+    const key = dayKey(day);
+    if (days.has(key)) n += 1;
+    else if (key !== today && !isDayOff(key, daysOff)) break;
   }
   return n;
+}
+
+/**
+ * Сколько рабочих дней задача уже простояла в «Сегодня» несделанной
+ * и рассчитана ли она на несколько дней.
+ */
+export function todayProgress(task, now = new Date(), { daysOff = [] } = {}) {
+  const duration = Math.max(1, task.durationDays ?? 1);
+  const missed = task.todaySince ? workdaysBetween(task.todaySince, dayKey(now), daysOff) : 0;
+  return {
+    duration,
+    missed,
+    day: missed + 1, // какой по счёту рабочий день идёт задача
+    overdue: missed >= duration, // запланированные дни прошли
+    stuck: missed >= duration + 1, // и ещё день сверху: её избегают
+  };
 }
 
 /** Сколько косвенных/шумовых задач закрыто подряд сегодня, начиная с последней. */
@@ -87,30 +111,39 @@ export function nonDirectStreak(tasks, now = new Date()) {
 }
 
 /** Прямые задачи, которые висят в «Сегодня» 2+ дня: их, скорее всего, избегают. */
-export function stuckDirect(tasks, now = new Date(), minDays = 2) {
-  const today = dayKey(now);
+/**
+ * Прямые задачи, которые висят в «Сегодня» дольше, чем на них рассчитано (+1 день):
+ * их, скорее всего, избегают. Считаются только рабочие дни.
+ */
+export function stuckDirect(tasks, now = new Date(), cal = {}) {
   return openIn(tasks, 'today')
-    .filter((t) => t.impact === 'direct' && t.todaySince && daysBetweenKeys(t.todaySince, today) >= minDays)
-    .map((t) => ({ task: t, days: daysBetweenKeys(t.todaySince, today) }));
+    .filter((t) => t.impact === 'direct')
+    .map((t) => ({ task: t, progress: todayProgress(t, now, cal) }))
+    .filter(({ progress }) => progress.stuck)
+    .map(({ task, progress }) => ({ task, days: progress.missed, duration: progress.duration }));
 }
 
 /** Задачи в «Сегодня», оставшиеся с прошлых дней и ещё не разобранные. */
-export function carryOver(tasks, now = new Date()) {
+/**
+ * Задачи в «Сегодня», не сделанные в свои рабочие дни и ещё не разобранные.
+ * Задача на несколько дней попадает сюда только после того, как её дни прошли.
+ */
+export function carryOver(tasks, now = new Date(), cal = {}) {
   const today = dayKey(now);
-  return openIn(tasks, 'today').filter((t) => t.todaySince && t.todaySince < today && t.carryAck !== today);
+  return openIn(tasks, 'today').filter((t) => t.carryAck !== today && todayProgress(t, now, cal).overdue);
 }
 
 /**
  * Радар ловушки занятости.
  * level: ok | warn | trap. reasons — почему, в порядке важности.
  */
-export function trapStatus(tasks, now = new Date()) {
+export function trapStatus(tasks, now = new Date(), cal = {}) {
   const reasons = [];
   const todayOpen = openIn(tasks, 'today');
   const openDirect = todayOpen.filter((t) => t.impact === 'direct');
   const streak = nonDirectStreak(tasks, now);
   const week = weekSummary(tasks, now);
-  const stuck = stuckDirect(tasks, now);
+  const stuck = stuckDirect(tasks, now, cal);
   let level = 'ok';
   const raise = (l) => {
     if (l === 'trap' || (l === 'warn' && level === 'ok')) level = l;
@@ -140,10 +173,14 @@ export function trapStatus(tasks, now = new Date()) {
 
   if (stuck.length) {
     raise('warn');
-    const { task, days } = stuck[0];
+    const { task, days, duration } = stuck[0];
+    const workdays = `${days} ${plural(days, ['рабочий день', 'рабочих дня', 'рабочих дней'])}`;
     reasons.push({
       code: 'stuck',
-      message: `«${task.title}» висит в «Сегодня» уже ${days} дн. Разбей её на маленький первый шаг.`,
+      message:
+        duration > 1
+          ? `«${task.title}» рассчитана на ${duration} ${plural(duration, ['день', 'дня', 'дней'])}, а висит уже ${workdays}. Разбей её на маленький первый шаг.`
+          : `«${task.title}» висит в «Сегодня» уже ${workdays}. Разбей её на маленький первый шаг.`,
     });
   }
 
@@ -157,7 +194,7 @@ export function trapStatus(tasks, now = new Date()) {
 
 /** Срез всех открытых задач для разбора 80/20. */
 export function paretoSnapshot(tasks) {
-  const open = tasks.filter(isOpen);
+  const open = tasks.filter((t) => isWork(t) && isOpen(t));
   const counts = countByImpact(open);
   return {
     ...counts,

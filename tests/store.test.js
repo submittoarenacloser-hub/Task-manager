@@ -116,3 +116,31 @@ test('пропуск раза переносит дату, обычная зад
   assert.equal(store.toggleDone(plain.id), null);
   assert.equal(store.getState().tasks.filter((x) => x.title === 'Разово').length, 1);
 });
+
+test('дело по дому: повтор остаётся в разделе «Дом» и не попадает в «Сегодня»', () => {
+  const today = dayKey();
+  const t = store.addTask({
+    title: 'Фильтр для воды',
+    horizon: 'life',
+    category: 'home',
+    repeat: { unit: 'month', every: 3, anchor: today },
+    dueDate: today,
+  });
+  assert.equal(t.horizon, 'life');
+  assert.equal(t.category, 'home');
+  store.refreshDue();
+  assert.equal(store.findTask(t.id).horizon, 'life');
+  const next = store.toggleDone(t.id);
+  assert.equal(next.horizon, 'life');
+  assert.ok(next.dueDate > today);
+});
+
+test('длительность и выходные по умолчанию', () => {
+  const t = store.addTask({ title: 'Большая задача', impact: 'direct', horizon: 'today' });
+  assert.equal(t.durationDays, 1);
+  store.updateTask(t.id, { durationDays: 3 });
+  assert.equal(store.findTask(t.id).durationDays, 3);
+  assert.deepEqual(store.getState().settings.daysOff, [6, 0]);
+  assert.equal(store.getState().settings.lifeRemindTime, '10:00');
+  assert.equal(store.normalize({ tasks: [], settings: { daysOff: ['5', '6'] } }).settings.daysOff.join(), '5,6');
+});

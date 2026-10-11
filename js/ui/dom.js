@@ -27,6 +27,10 @@ export const icon = {
   arrow: (s) => svg('<path d="M4 12h15M13 6l6 6-6 6"/>', s),
   user: (s) => svg('<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-3.6 4-5.4 7-5.4s5.8 1.8 7 5.4"/>', s),
   repeat: (s) => svg('<path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/>', s),
+  home: (s) => svg('<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/>', s),
+  coffee: (s) => svg('<path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3.5v2M12 3.5v2"/>', s),
+  clock: (s) => svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>', s),
+  help: (s) => svg('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.6"/><path d="M12 17v.1" stroke-width="2.4"/>', s),
   warn: (s) => svg('<path d="M12 3 2 20h20z"/><path d="M12 10v4.5M12 17.4v.1" stroke-width="2.2"/>', s),
 };
 

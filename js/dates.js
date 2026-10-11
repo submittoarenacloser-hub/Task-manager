@@ -59,6 +59,42 @@ export function weekdayShort(date) {
   return WEEKDAYS_SHORT[new Date(date).getDay()];
 }
 
+// ——— рабочая неделя ———
+
+/** Выходные по умолчанию: суббота и воскресенье (0 — воскресенье, как в Date#getDay). */
+export const DEFAULT_DAYS_OFF = [6, 0];
+
+/** Ключ дня, сдвинутый на n дней (считаем в UTC, чтобы не мешал переход на летнее время). */
+export function shiftKey(key, n) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+export function weekdayOfKey(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+export function isDayOff(key, daysOff = []) {
+  return daysOff.includes(weekdayOfKey(key));
+}
+
+/** Сколько рабочих дней в отрезке [from, to). Выходные не считаются. */
+export function workdaysBetween(fromKey, toKey, daysOff = []) {
+  let n = 0;
+  for (let key = fromKey, i = 0; key < toKey && i < 1000; key = shiftKey(key, 1), i++) {
+    if (!isDayOff(key, daysOff)) n += 1;
+  }
+  return n;
+}
+
+/** Ближайший рабочий день начиная с key (сам key, если он рабочий). */
+export function nextWorkday(key, daysOff = []) {
+  let d = key;
+  for (let i = 0; i < 7 && isDayOff(d, daysOff); i++) d = shiftKey(d, 1);
+  return d;
+}
+
 /** «сегодня 14:00», «завтра 09:00», «вчера 18:30», «12 окт 14:00». */
 export function formatWhen(date, now = new Date()) {
   const d = new Date(date);

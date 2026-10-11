@@ -14,7 +14,7 @@ import {
   buildPlan,
   DEFAULT_POMODORO,
 } from './focus.js';
-import { addDays, dayKey, atTime, startOfDay, MINUTE } from './dates.js';
+import { addDays, dayKey, atTime, startOfDay, MINUTE, DEFAULT_DAYS_OFF } from './dates.js';
 
 const KEY = 'vector.state.v1';
 const SCHEMA = 1;
@@ -32,7 +32,12 @@ export function defaultState() {
       notify: structuredClone(DEFAULT_NOTIFY),
       // Помодоро: длина круга фокуса, перерыва и общее время (0 — один круг), в минутах
       pomodoro: { ...DEFAULT_POMODORO },
+      // Выходные (0 — вс … 6 — сб): без рабочих уведомлений, в счёт дней не идут
+      daysOff: [...DEFAULT_DAYS_OFF],
+      // Дела по дому напоминают в день срока в это время (null — только если время задано у дела)
+      lifeRemindTime: '10:00',
     },
+    guideSeen: false,
   };
 }
 
@@ -54,6 +59,7 @@ export function normalize(raw) {
       ...base.settings,
       ...settings,
       limits: { ...base.settings.limits, ...settings.limits },
+      daysOff: Array.isArray(settings.daysOff) ? settings.daysOff.map(Number) : base.settings.daysOff,
       // прежняя настройка «длина фокус-сессии» становится длиной круга
       pomodoro: { ...base.settings.pomodoro, ...(focusMinutes ? { focus: focusMinutes } : {}), ...settings.pomodoro },
       notify: {
@@ -167,7 +173,7 @@ export function skipOccurrence(id) {
   if (!task?.repeat) return null;
   const today = dayKey();
   const dueDate = nextOccurrence(task.repeat, task.dueDate && task.dueDate > today ? task.dueDate : today);
-  const horizon = horizonForDate(dueDate, today);
+  const horizon = task.horizon === 'life' ? 'life' : horizonForDate(dueDate, today);
   patchTask(id, (t) => ({
     ...t,
     dueDate,
@@ -281,6 +287,10 @@ export function markOnboarded() {
   commit({ ...state, onboarded: true });
 }
 
+export function markGuideSeen() {
+  if (!state.guideSeen) commit({ ...state, guideSeen: true });
+}
+
 /** Пример: цель и задачи, чтобы увидеть приложение в работе. */
 export function loadSample() {
   const now = new Date();
@@ -317,6 +327,7 @@ export function loadSample() {
     t('Посмотреть вебинар про воронки', 'indirect', 'week'),
     t('Планёрка с командой', 'indirect', 'today', repeating({ unit: 'week', every: 1, weekdays: [1, 2, 3, 4, 5] }, today, '10:00')),
     t('Отчёт и налоги за квартал', 'direct', 'later', repeating({ unit: 'month', every: 3 }, quarterDay, '09:00')),
+    t('Подготовить большое КП для сети магазинов', 'direct', 'week', { durationDays: 3 }),
     t('Переделать логотип', 'indirect', 'month'),
     t('Собрать отзывы клиентов для сайта', 'indirect', 'month'),
     t('Разобрать старые письма в почте', 'noise', 'later'),
@@ -337,6 +348,19 @@ export function loadSample() {
     done('Отправить три КП', 'direct', 5, '15:00'),
     done('Обзвон старой базы', 'direct', 6, '12:00'),
   ];
+  // Дом и дела: отдельный раздел, в статистику работы не входит
+  const life = (title, category, rule, start) => ({
+    ...t(title, 'indirect', 'life'),
+    category,
+    ...repeating(rule, start),
+    horizon: 'life',
+    todaySince: null,
+  });
+  const lifeTasks = [
+    life('Оплатить интернет и телефон', 'money', { unit: 'month', every: 1 }, today),
+    life('Заменить фильтр для воды', 'home', { unit: 'month', every: 3 }, dayKey(addDays(now, 12))),
+    life('Поменять масло в машине', 'car', { unit: 'month', every: 6 }, dayKey(addDays(now, 40))),
+  ].map((x) => ({ ...x, remindTime: null }));
   const cut = [
     t('Сделать красивую таблицу расходов', 'noise', 'later', { status: 'cut', cutAt: at(-1, '19:00') }),
     t('Съездить на нетворкинг «на всякий случай»', 'noise', 'week', { status: 'cut', cutAt: at(-2, '19:00') }),
@@ -352,7 +376,7 @@ export function loadSample() {
     ...state,
     onboarded: true,
     goal: { title: 'Продажи: 10 новых клиентов в месяц', metric: 'клиенты и выручка' },
-    tasks: [...tasks, ...cut],
+    tasks: [...tasks, ...lifeTasks, ...cut],
     sessions,
   });
 }

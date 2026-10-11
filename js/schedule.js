@@ -1,6 +1,18 @@
 // Что и когда показать в уведомлениях. Чистые функции — легко тестировать.
 
-import { atTime, addDays, dayKey, formatWhen, formatDuration, plural, HOUR, WEEKDAYS_FULL } from './dates.js';
+import {
+  atTime,
+  addDays,
+  dayKey,
+  formatWhen,
+  formatDuration,
+  plural,
+  isDayOff,
+  nextWorkday,
+  HOUR,
+  WEEKDAYS_FULL,
+  DEFAULT_DAYS_OFF,
+} from './dates.js';
 import { openIn, mainTaskOfDay, countByImpact, isOpen } from './model.js';
 import { doneToday, focusShare, trapStatus } from './stats.js';
 import { boundaries } from './focus.js';
@@ -11,7 +23,7 @@ export const DEFAULT_NOTIFY = {
   morning: { on: true, time: '09:00' },
   midday: { on: true, time: '13:30' },
   evening: { on: true, time: '20:30' },
-  weekly: { on: true, day: 0, time: '18:00' }, // 0 — воскресенье
+  weekly: { on: true, day: 5, time: '17:00' }, // 5 — пятница, 0 — воскресенье
   trap: true,
   reminders: true,
 };
@@ -88,7 +100,7 @@ export function eveningMessage(state, now) {
 }
 
 export function weeklyMessage(state) {
-  const open = state.tasks.filter(isOpen).length;
+  const open = state.tasks.filter((t) => isOpen(t) && t.horizon !== 'life').length;
   return {
     title: 'Разбор недели 80/20',
     body: `Открыто ${open} ${tasksWord(open)}. Оставь 20%, которые двигают ${goalName(state)}, остальное отсеки.`,
@@ -105,6 +117,19 @@ const DAILY = {
 const DAILY_NAMES = { morning: 'План на день', midday: 'Проверка курса', evening: 'Итог дня' };
 
 const settingsOf = (state) => ({ ...DEFAULT_NOTIFY, ...state.settings?.notify });
+const daysOffOf = (state) => state.settings?.daysOff ?? DEFAULT_DAYS_OFF;
+
+/**
+ * В какой день недели на самом деле придёт разбор недели:
+ * если выбранный день выходной — в последний рабочий день перед ним.
+ */
+export function weeklyReviewDay(day, daysOff = []) {
+  let d = Number(day);
+  for (let i = 0; i < 7 && daysOff.includes(d); i++) d = (d + 6) % 7;
+  return d;
+}
+
+const CATEGORY_NAMES = { home: 'Дом', car: 'Машина', health: 'Здоровье', money: 'Платежи', other: 'Дела' };
 
 /**
  * Все уведомления по времени на дни [from, from + days).
@@ -113,27 +138,32 @@ const settingsOf = (state) => ({ ...DEFAULT_NOTIFY, ...state.settings?.notify })
  */
 function timedNotifications(state, from, days) {
   const cfg = settingsOf(state);
+  const daysOff = daysOffOf(state);
+  const reviewDay = weeklyReviewDay(cfg.weekly?.day ?? 5, daysOff);
   const list = [];
   for (let d = 0; d < days; d++) {
     const day = addDays(from, d);
     const key = dayKey(day);
+    // В выходные о работе не напоминаем
+    if (isDayOff(key, daysOff)) continue;
     for (const kind of Object.keys(DAILY)) {
       if (!cfg[kind]?.on) continue;
       const at = atTime(day, cfg[kind].time);
       list.push({ key: `${kind}:${key}`, kind, at, name: DAILY_NAMES[kind], build: () => DAILY[kind](state, at) });
     }
-    if (cfg.weekly?.on && day.getDay() === Number(cfg.weekly.day)) {
+    if (cfg.weekly?.on && day.getDay() === reviewDay) {
       list.push({
         key: `weekly:${key}`,
         kind: 'weekly',
         at: atTime(day, cfg.weekly.time),
-        name: `Разбор недели (${WEEKDAYS_FULL[cfg.weekly.day]})`,
+        name: `Разбор недели (${WEEKDAYS_FULL[reviewDay]})`,
         build: () => weeklyMessage(state),
       });
     }
   }
   if (cfg.reminders) {
-    const reminder = (task, key, at) =>
+    const reminder = (task, key, at) => {
+      const life = task.horizon === 'life';
       list.push({
         key,
         kind: 'reminder',
@@ -141,22 +171,45 @@ function timedNotifications(state, from, days) {
         name: task.title,
         build: () => ({
           title: task.title,
-          body: task.impact === 'direct' ? 'Напоминание · прямая задача' : 'Напоминание',
-          url: '#tasks',
+          body: life
+            ? `${CATEGORY_NAMES[task.category] ?? 'Дела'} · пора сделать`
+            : task.impact === 'direct'
+              ? 'Напоминание · прямая задача'
+              : 'Напоминание',
+          url: life ? '#life' : '#tasks',
         }),
       });
+    };
     const first = dayKey(from);
     const last = dayKey(addDays(from, days - 1));
+    const at = (date, time) => atTime(new Date(`${date}T00:00`), time);
+    const lifeTime = state.settings?.lifeRemindTime ?? null;
     for (const task of state.tasks) {
       if (!isOpen(task)) continue;
-      if (task.repeat && task.remindTime && task.dueDate) {
-        // повторяющаяся: напоминание в каждый её день, начиная с ближайшего
+      if (task.horizon === 'life') {
+        // Дела по дому: в день срока, в своё время или в общее время для дел; выходные не мешают
+        const time = task.remindTime || lifeTime;
+        if (!time || !task.dueDate) continue;
+        const start = task.dueDate > first ? task.dueDate : first;
+        const dates = task.repeat
+          ? occurrencesBetween(task.repeat, start, last)
+          : task.dueDate >= first && task.dueDate <= last
+            ? [task.dueDate]
+            : [];
+        for (const date of dates) reminder(task, `task:${task.id}:${date}`, at(date, time));
+      } else if (task.repeat && task.remindTime && task.dueDate) {
+        // повторяющаяся рабочая: в каждый её рабочий день, начиная с ближайшего
         const start = task.dueDate > first ? task.dueDate : first;
         for (const date of occurrencesBetween(task.repeat, start, last)) {
-          reminder(task, `task:${task.id}:${date}`, atTime(new Date(`${date}T00:00`), task.remindTime));
+          if (!isDayOff(date, daysOff)) reminder(task, `task:${task.id}:${date}`, at(date, task.remindTime));
         }
       } else if (task.remindAt) {
-        reminder(task, `task:${task.id}:${task.remindAt}`, new Date(task.remindAt));
+        // разовая рабочая: если попала на выходной — в то же время в ближайший рабочий день
+        const when = new Date(task.remindAt);
+        const date = dayKey(when);
+        const shifted = nextWorkday(date, daysOff);
+        const time = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+        reminder(task, `task:${task.id}:${task.remindAt}`, shifted === date ? when : at(shifted, time));
       }
     }
   }
@@ -225,8 +278,8 @@ export function dueNotifications(state, now = new Date(), fired = {}, { only = n
     .filter((n) => t >= n.at.getTime() && t - n.at.getTime() < GRACE_BY_KIND[n.kind])
     .map(materialize);
 
-  if (settingsOf(state).trap && wanted('trap')) {
-    const trap = trapStatus(state.tasks, now);
+  if (settingsOf(state).trap && wanted('trap') && !isDayOff(dayKey(now), daysOffOf(state))) {
+    const trap = trapStatus(state.tasks, now, { daysOff: daysOffOf(state) });
     if (trap.streak >= 3 && trap.openDirect.length) {
       // Не чаще, чем на каждой третьей косвенной подряд: 3, 6, 9…
       const key = `trap:${dayKey(now)}:${Math.floor(trap.streak / 3)}`;

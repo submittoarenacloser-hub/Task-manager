@@ -1,7 +1,7 @@
 // Листы: редактирование задачи, проверка правил фокуса, цель, делегирование.
 
 import { esc, icon, openSheet, toast } from './dom.js';
-import { IMPACTS, IMPACT_IDS, HORIZONS, FILTER_QUESTION } from '../model.js';
+import { IMPACTS, IMPACT_IDS, HORIZONS, FILTER_QUESTION, LIFE_CATEGORIES, isLife } from '../model.js';
 import { checkPlacement } from '../rules.js';
 import { addDays, atTime, toLocalInput, formatWhen, formatDayKey, dayKey, plural, HOUR } from '../dates.js';
 import {
@@ -109,11 +109,14 @@ export function openTaskSheet(id) {
   const repeating = Boolean(task.repeat);
   const preset = presetOf(task.repeat);
   const custom = task.repeat ?? { unit: 'day', every: 1 };
+  const life = isLife(task); // дело по дому: без типа, горизонтов и фокуса
+  const lifeTime = store.getState().settings.lifeRemindTime;
+  const duration = task.durationDays ?? 1;
 
   openSheet(
     `<form class="sheet-body" id="task-form" novalidate>
       <header class="sheet-head row">
-        <p class="eyebrow">Задача</p>
+        <p class="eyebrow">${life ? 'Дело по дому' : 'Задача'}</p>
         <button type="button" class="icon-btn" data-close aria-label="Закрыть">${icon.close()}</button>
       </header>
       <label class="field">
@@ -124,15 +127,35 @@ export function openTaskSheet(id) {
         <span class="field-label">Заметка</span>
         <textarea id="edit-note" name="note" rows="2" placeholder="Первый шаг, ссылка, детали">${esc(task.note)}</textarea>
       </label>
-      <fieldset class="field">
-        <legend class="field-label">${FILTER_QUESTION}</legend>
-        ${segmented('impact', impacts, task.impact)}
-        <p class="field-hint" id="impact-hint">${esc(IMPACTS[task.impact].hint)}</p>
-      </fieldset>
-      <fieldset class="field" id="horizon-field" ${repeating ? 'hidden' : ''}>
-        <legend class="field-label">Когда</legend>
-        ${segmented('horizon', HORIZONS, task.horizon)}
-      </fieldset>
+      ${
+        life
+          ? `<fieldset class="field">
+              <legend class="field-label">Раздел</legend>
+              ${segmented('category', LIFE_CATEGORIES, task.category ?? 'home')}
+            </fieldset>
+            <label class="field" id="due-field" ${repeating ? 'hidden' : ''}>
+              <span class="field-label">Когда</span>
+              <input type="date" id="edit-due" value="${task.dueDate ?? ''}">
+            </label>`
+          : `<fieldset class="field">
+              <legend class="field-label">${FILTER_QUESTION}</legend>
+              ${segmented('impact', impacts, task.impact)}
+              <p class="field-hint" id="impact-hint">${esc(IMPACTS[task.impact].hint)}</p>
+            </fieldset>
+            <fieldset class="field" id="horizon-field" ${repeating ? 'hidden' : ''}>
+              <legend class="field-label">Когда</legend>
+              ${segmented('horizon', HORIZONS, task.horizon)}
+            </fieldset>
+            <label class="field">
+              <span class="field-label">Сколько займёт</span>
+              <select id="edit-duration">
+                ${[1, 2, 3, 4, 5, 7, 10, 14]
+                  .map((n) => `<option value="${n}" ${n === duration ? 'selected' : ''}>${n} ${plural(n, ['день', 'дня', 'дней'])}</option>`)
+                  .join('')}
+              </select>
+              <span class="field-hint">Считаются рабочие дни. Пока они идут, задача показывает «день 2 из 3» и не попадает в хвосты.</span>
+            </label>`
+      }
       <fieldset class="field">
         <legend class="field-label">Повтор</legend>
         <select id="edit-repeat" aria-label="Повтор">
@@ -158,7 +181,7 @@ export function openTaskSheet(id) {
       </fieldset>
       <fieldset class="field">
         <legend class="field-label">Напомнить</legend>
-        <div id="remind-once" ${repeating ? 'hidden' : ''}>
+        <div id="remind-once" ${repeating || life ? 'hidden' : ''}>
           <div class="remind-row">
             <input type="datetime-local" id="edit-remind" name="remindAt" value="${task.remindAt ? toLocalInput(task.remindAt) : ''}">
             <button type="button" class="btn quiet small" data-remind="">Без напоминания</button>
@@ -167,9 +190,13 @@ export function openTaskSheet(id) {
             .map((q) => `<button type="button" class="chip" data-remind="${toLocalInput(q.at)}">${q.label}</button>`)
             .join('')}</div>
         </div>
-        <div class="remind-row" id="remind-repeat" ${repeating ? '' : 'hidden'}>
+        <div class="remind-row" id="remind-repeat" ${repeating || life ? '' : 'hidden'}>
           <input type="time" id="edit-remind-time" value="${task.remindTime ?? ''}" aria-label="Время напоминания">
-          <span class="field-hint">в каждый день повтора</span>
+          <span class="field-hint" id="remind-time-hint">${
+            life
+              ? `${repeating ? 'в каждый день повтора' : 'в день срока'}${lifeTime ? `; пусто — в ${lifeTime}` : ''}`
+              : 'в каждый день повтора'
+          }</span>
           <button type="button" class="btn quiet small" id="clear-remind-time">Без напоминания</button>
         </div>
       </fieldset>
@@ -181,10 +208,10 @@ export function openTaskSheet(id) {
         <button type="button" class="btn" data-act="delegate-confirm">Передать</button>
       </div>
       <div class="sheet-tools">
-        <button type="button" class="btn quiet small" data-act="focus">${icon.play(16)} Фокус-сессия</button>
+        ${life ? '' : `<button type="button" class="btn quiet small" data-act="focus">${icon.play(16)} Фокус-сессия</button>`}
         ${repeating && task.status === 'open' ? `<button type="button" class="btn quiet small" data-act="skip">${icon.repeat(16)} Пропустить этот раз</button>` : ''}
         <button type="button" class="btn quiet small" data-act="delegate">${icon.user(16)} Делегировать</button>
-        <button type="button" class="btn quiet small danger" data-act="cut">${icon.cut(16)} Отсечь</button>
+        <button type="button" class="btn quiet small danger" data-act="cut">${icon.cut(16)} ${life ? 'Удалить' : 'Отсечь'}</button>
       </div>
       <footer class="sheet-foot">
         <button type="button" class="btn quiet" data-close>Отмена</button>
@@ -218,9 +245,14 @@ export function openTaskSheet(id) {
         const id = $('#edit-repeat').value;
         const on = id !== 'none';
         $('#repeat-extra').hidden = !on;
-        $('#horizon-field').hidden = on;
-        $('#remind-once').hidden = on;
-        $('#remind-repeat').hidden = !on;
+        if (life) {
+          $('#due-field').hidden = on;
+          $('#remind-time-hint').textContent = `${on ? 'в каждый день повтора' : 'в день срока'}${lifeTime ? `; пусто — в ${lifeTime}` : ''}`;
+        } else {
+          $('#horizon-field').hidden = on;
+          $('#remind-once').hidden = on;
+          $('#remind-repeat').hidden = !on;
+        }
         $('#repeat-custom').hidden = id !== 'custom';
         if (resetDays) {
           weekdays = id === 'weekdays' ? [1, 2, 3, 4, 5] : id === 'weekly' || id === 'custom' ? [weekdayOfStart()] : null;
@@ -248,6 +280,10 @@ export function openTaskSheet(id) {
         if (e.target.id === 'edit-unit' || e.target.id === 'edit-start') syncRepeat(e.target.id === 'edit-unit');
       });
       $('#edit-every').addEventListener('input', () => syncRepeat());
+      // у дела по дому дата «Когда» становится первым разом, если включить повтор
+      $('#edit-due')?.addEventListener('change', (e) => {
+        if (e.target.value) $('#edit-start').value = e.target.value;
+      });
       form.querySelectorAll('.wd').forEach((b) =>
         b.addEventListener('click', () => {
           const d = Number(b.dataset.wd);
@@ -267,7 +303,7 @@ export function openTaskSheet(id) {
       $('#clear-remind-time').addEventListener('click', () => {
         $('#edit-remind-time').value = '';
       });
-      $('[data-act="focus"]').addEventListener('click', () => {
+      $('[data-act="focus"]')?.addEventListener('click', () => {
         close();
         ui.focusTaskId = id;
         location.hash = '#focus';
@@ -279,7 +315,9 @@ export function openTaskSheet(id) {
       });
       $('[data-act="cut"]').addEventListener('click', () => {
         close();
-        cutWithUndo(id);
+        if (!life) return cutWithUndo(id);
+        store.cutTask(id);
+        toast('Дело удалено.', { action: { label: 'Вернуть', run: () => store.restoreTask(id) } });
       });
       $('[data-act="delegate"]').addEventListener('click', () => {
         const row = $('#delegate-row');
@@ -300,8 +338,24 @@ export function openTaskSheet(id) {
         const data = new FormData(form);
         const title = String(data.get('title')).trim();
         if (!title) return $('#edit-title').focus();
-        const impact = data.get('impact');
         const rule = readRule();
+        if (life) {
+          // дело по дому: дата вместо горизонта, напоминание — время в день срока
+          const dueDate = rule ? nextOccurrence(rule, addDaysKey(startKey(), -1)) : $('#edit-due').value || null;
+          close();
+          store.updateTask(id, {
+            title,
+            note: String(data.get('note') || '').trim(),
+            category: data.get('category') || 'home',
+            repeat: rule,
+            dueDate,
+            remindTime: $('#edit-remind-time').value || null,
+            remindAt: null,
+          });
+          if (rule && !task.repeat) toast(`Повтор: ${describeRule(rule)}. Первый раз — ${formatDayKey(dueDate)}.`);
+          return;
+        }
+        const impact = data.get('impact');
         const dueDate = rule ? nextOccurrence(rule, addDaysKey(startKey(), -1)) : null;
         let horizon = rule ? horizonForDate(dueDate, today) : data.get('horizon');
         const current = store.findTask(id);
@@ -320,6 +374,7 @@ export function openTaskSheet(id) {
           note: String(data.get('note') || '').trim(),
           impact,
           horizon,
+          durationDays: Number($('#edit-duration').value) || 1,
           repeat: rule,
           dueDate,
           remindTime,

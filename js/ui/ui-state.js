@@ -9,6 +9,8 @@ export const ui = {
   triage: null, // { queue, index, start, kept, cut, delegated, delegating }
   triageResult: null,
   installPrompt: null,
+  lifeDraft: { title: '', category: 'home', repeat: 'none', date: null },
+  guideStep: 0,
 };
 
 let refreshFn = () => {};

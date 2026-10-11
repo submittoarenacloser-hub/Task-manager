@@ -291,8 +291,8 @@ a {
   right: 0;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  grid-template-columns: repeat(5, 1fr);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
   background: var(--surface);
   border-top: 1px solid var(--line);
 }
@@ -877,6 +877,61 @@ textarea:focus {
   list-style: disc;
   color: var(--ink);
   font-size: 14.5px;
+}
+
+.dayoff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--break-soft);
+  border: 1px solid color-mix(in srgb, var(--break) 30%, transparent);
+}
+
+.dayoff .radar-head .ico {
+  color: var(--break-ink);
+}
+
+.dayoff p {
+  font-size: 14.5px;
+  color: var(--ink-2);
+}
+
+.life-line,
+.guide-line a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  text-decoration: none;
+  font-weight: 550;
+}
+
+.life-line span,
+.guide-line span {
+  flex: 1;
+}
+
+.life-line .ico:first-child {
+  color: var(--indirect-ink);
+}
+
+.guide-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guide-line a {
+  flex: 1;
+  min-width: 0;
+  background: var(--direct-soft);
+  border-color: color-mix(in srgb, var(--direct) 30%, transparent);
+  color: var(--direct-ink);
 }
 
 .carry {
@@ -1977,6 +2032,11 @@ textarea:focus {
   color: var(--ink-3);
 }
 
+.ccol-label.is-off {
+  color: var(--break-ink);
+  opacity: 0.8;
+}
+
 .ccol-label.is-today {
   color: var(--ink);
   font-weight: 600;
@@ -2181,13 +2241,13 @@ textarea:focus {
 .weekday-pick {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .wd {
-  min-width: 44px;
+  min-width: 38px;
   min-height: 36px;
-  padding: 0 10px;
+  padding: 0 7px;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -2200,6 +2260,17 @@ textarea:focus {
   background: var(--ink);
   border-color: var(--ink);
   color: var(--bg);
+}
+
+/* выходной день — спокойный цвет отдыха */
+.wd-off[aria-pressed='true'] {
+  background: var(--break-soft);
+  border-color: var(--break);
+  color: var(--break-ink);
+}
+
+.btn.fit {
+  align-self: flex-start;
 }
 
 .repeat-extra {
@@ -2489,4 +2560,157 @@ textarea:focus {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ——— дом и дела ——— */
+
+.life {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.life-opts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pick.is-on {
+  background: var(--indirect-soft);
+  border-color: var(--indirect);
+  color: var(--indirect-ink);
+}
+
+.life .col-head.life-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 0 4px;
+}
+
+.life .col-n {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.life-group.is-now {
+  border-color: color-mix(in srgb, var(--indirect) 45%, var(--line));
+}
+
+.tag-life {
+  background: var(--indirect-soft);
+  color: var(--indirect-ink);
+}
+
+.task-life .check::before {
+  border-color: var(--indirect);
+  border-radius: 7px;
+}
+
+.task-life.is-done .check::before {
+  background: var(--indirect);
+}
+
+.life .done {
+  padding: 8px 16px;
+}
+
+/* ——— гид ——— */
+
+.guide {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.guide-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+.guide-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--bg);
+  pointer-events: none;
+}
+
+.guide-demo .goal-title {
+  font-size: 18px;
+}
+
+.guide-note {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.guide-tabs .htab {
+  cursor: default;
+}
+
+.guide-radar {
+  padding: 12px 14px;
+}
+
+.guide-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.guide-meta .wd {
+  min-width: 36px;
+  min-height: 30px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 13px;
+}
+
+.guide-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.guide-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.guide-dots span.is-on {
+  width: 20px;
+  border-radius: 999px;
+  background: var(--direct);
+}
+
+.guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }

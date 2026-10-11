@@ -11,13 +11,17 @@ import * as focusView from './ui/focus-view.js';
 import * as triageView from './ui/triage-view.js';
 import * as statsView from './ui/stats-view.js';
 import * as settingsView from './ui/settings-view.js';
+import * as lifeView from './ui/life-view.js';
+import * as guideView from './ui/guide-view.js';
 
 const ROUTES = {
   tasks: { view: tasksView, label: 'Задачи', icon: icon.list, title: 'Задачи' },
   focus: { view: focusView, label: 'Фокус', icon: icon.focus, title: 'Фокус-сессия' },
   triage: { view: triageView, label: 'Разбор', icon: icon.cut, title: 'Разбор 80/20' },
   stats: { view: statsView, label: 'Итоги', icon: icon.chart, title: 'Итоги' },
+  life: { view: lifeView, label: 'Дом', icon: icon.home, title: 'Дом и дела' },
   settings: { view: settingsView, label: 'Настройки', icon: icon.gear, title: 'Настройки', hidden: true },
+  guide: { view: guideView, label: 'Как пользоваться', icon: icon.help, title: 'Как пользоваться', hidden: true },
 };
 
 const viewEl = document.getElementById('view');
